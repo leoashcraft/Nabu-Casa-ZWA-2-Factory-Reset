@@ -76,6 +76,18 @@ node cli.mjs --restore backups/zwa2-nvm-<homeid>-<timestamp>.bin
 
 This restores the complete network — Home ID, paired nodes, security keys — exactly as it was.
 
+## Home Assistant add-on (experimental)
+
+If you run **Home Assistant OS or Supervised**, you can run this tool directly on your HA box instead of a separate computer:
+
+1. Settings → Add-ons → Add-on Store → ⋮ (top right) → **Repositories** → add
+   `https://github.com/leoashcraft/zwa2-factory-reset`
+2. Install **ZWA-2 Factory Reset** from the store.
+3. **Stop the Z-Wave JS add-on first** (the serial port must be free).
+4. In the add-on Configuration tab set `confirm: true`, then start the add-on and watch the log. Backups land in `/share/zwa2-factory-reset/backups/`.
+
+See the [add-on documentation](zwa2_factory_reset/DOCS.md) for all options (restore, port selection, region handling). The add-on wraps the exact same CLI; the packaging is newer and marked experimental. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
+
 ## RF region
 
 Erasing the NVM resets the radio region to the firmware default. Because not everyone is in the US, the tool records your region **before** wiping and asks afterwards whether to restore it or leave the default (or use `--region` to decide up front). You can also change it any time with the official toolbox's **Configure** tool in Chrome/Edge.

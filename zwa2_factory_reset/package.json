@@ -1,0 +1,31 @@
+{
+  "name": "zwa2-factory-reset",
+  "version": "1.0.0",
+  "description": "Factory-reset a Home Assistant Connect ZWA-2 (or other Silicon Labs 700/800-series Z-Wave adapter) via the Gecko bootloader, bypassing the SetDefault firmware bug. Includes NVM backup/restore and RF region preservation.",
+  "type": "module",
+  "bin": {
+    "zwa2-factory-reset": "./cli.mjs"
+  },
+  "scripts": {
+    "start": "node cli.mjs"
+  },
+  "engines": {
+    "node": ">= 20"
+  },
+  "dependencies": {
+    "@zwave-js/serial": "^15.27.0",
+    "@zwave-js/shared": "^15.27.0",
+    "serialport": "^13.0.0",
+    "zwave-js": "^15.27.0"
+  },
+  "keywords": [
+    "zwave",
+    "z-wave",
+    "zwa-2",
+    "home-assistant",
+    "factory-reset",
+    "nvm",
+    "gecko-bootloader"
+  ],
+  "license": "MIT"
+}

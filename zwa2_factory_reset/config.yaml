@@ -1,0 +1,27 @@
+name: ZWA-2 Factory Reset
+version: "1.0.0"
+slug: zwa2_factory_reset
+description: Factory-reset a Home Assistant Connect ZWA-2 via the Gecko bootloader (works around the SetDefault firmware bug)
+url: https://github.com/leoashcraft/zwa2-factory-reset
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: once
+boot: manual
+init: false
+uart: true
+map:
+  - share:rw
+options:
+  action: wipe
+  confirm: false
+  port: auto
+  region: keep
+  restore_file: ""
+schema:
+  action: list(wipe|restore|list)
+  confirm: bool
+  port: str
+  region: str
+  restore_file: str
