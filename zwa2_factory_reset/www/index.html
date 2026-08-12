@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ZWA-2 Factory Reset</title>
+<style>
+  :root {
+    --bg: #f5f7fa; --card: #fff; --ink: #1c2733; --muted: #5b6b7b;
+    --line: #e3e8ee; --primary: #03a9f4; --danger: #db4437; --ok: #43a047; --warn: #f9a825;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1c2229; --ink:#e8edf2; --muted:#9fb0bf; --line:#2b333c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font: 15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:18px; margin-bottom:16px; }
+  .card h2 { font-size:16px; margin:0 0 6px; }
+  .card p { color:var(--muted); margin:0 0 14px; }
+  button { font: inherit; font-weight:600; border:0; border-radius:10px; padding:12px 16px;
+    cursor:pointer; color:#fff; width:100%; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .btn-primary { background:var(--primary); }
+  .btn-danger { background:var(--danger); }
+  .btn-ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .row { display:flex; gap:10px; align-items:center; }
+  .check { display:flex; gap:9px; align-items:flex-start; margin:12px 0 4px; color:var(--muted); }
+  .check input { margin-top:3px; }
+  select { width:100%; padding:11px; border-radius:10px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); font:inherit; margin-bottom:10px; }
+  #status { display:none; border-radius:10px; padding:12px 14px; margin:8px 0 0; font-weight:600; }
+  #status.running { display:block; background:rgba(3,169,244,.12); color:var(--primary); }
+  #status.done { display:block; background:rgba(67,160,71,.14); color:var(--ok); }
+  #status.error { display:block; background:rgba(219,68,55,.14); color:var(--danger); }
+  #logwrap { margin-top:14px; display:none; }
+  #log { background:#0d1117; color:#c9d1d9; border-radius:10px; padding:12px;
+    font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
+    max-height:340px; overflow:auto; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid currentColor;
+    border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; vertical-align:-2px; margin-right:8px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none;
+    align-items:center; justify-content:center; padding:16px; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--card); border-radius:14px; padding:22px; max-width:440px; }
+  .modal h3 { margin:0 0 10px; }
+  .modal p { color:var(--ink); }
+  .modal .row { margin-top:16px; }
+  .disabled-note { font-size:13px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ZWA-2 Factory Reset</h1>
+  <p class="sub">Wipe your Home Assistant Connect ZWA-2 back to factory settings — even when Home Assistant's own reset doesn't take.</p>
+
+  <div class="card">
+    <h2>1. Check your adapter</h2>
+    <p>See what's on the stick right now. This changes nothing.</p>
+    <button id="btnCheck" class="btn-primary">Check adapter</button>
+  </div>
+
+  <div class="card">
+    <h2>2. Factory reset</h2>
+    <p>Erase the Z-Wave network and start fresh. A backup is saved first, so you can undo it.</p>
+    <label class="check"><input type="checkbox" id="cleanup" />
+      <span>Also remove the old devices from Home Assistant (only the network on this adapter).</span></label>
+    <button id="btnWipe" class="btn-danger">Factory reset this adapter</button>
+  </div>
+
+  <div class="card">
+    <h2>3. Restore a backup <span class="disabled-note">(optional)</span></h2>
+    <p>Roll the adapter back to a saved network.</p>
+    <select id="backups"><option value="">No backups yet</option></select>
+    <button id="btnRestore" class="btn-ghost">Restore selected backup</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="logwrap"><div id="log"></div></div>
+</div>
+
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h3>Factory reset this adapter?</h3>
+    <p id="modalText">This permanently erases the Z-Wave network on your ZWA-2. Any paired devices will need to be re-added afterwards. A backup is saved automatically, so this can be undone.</p>
+    <div class="row">
+      <button class="btn-ghost" id="cancel">Cancel</button>
+      <button class="btn-danger" id="confirm">Yes, factory reset</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const logEl = $("log"), logWrap = $("logwrap"), statusEl = $("status");
+  let running = false;
+
+  function setButtons(disabled) {
+    running = disabled;
+    for (const id of ["btnCheck","btnWipe","btnRestore"]) $(id).disabled = disabled;
+  }
+  function showStatus(cls, text) {
+    statusEl.className = cls;
+    statusEl.innerHTML = (cls === "running" ? '<span class="spinner"></span>' : "") + text;
+  }
+
+  // Live event stream (relative URL so it works under the ingress path)
+  const es = new EventSource("api/events");
+  es.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "start") { logEl.textContent = ""; logWrap.style.display = "block"; setButtons(true); showStatus("running", "Working…"); }
+    else if (m.type === "log") { logEl.textContent += m.line + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+    else if (m.type === "status") { if (m.status && m.status !== "running") showStatus(m.status, m.message || (m.status === "done" ? "Done." : "Something went wrong.")); }
+    else if (m.type === "end") { setButtons(false); loadBackups(); }
+  };
+
+  async function post(url, body) {
+    const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{}) });
+    if (r.status === 409) showStatus("running", "Already working — please wait…");
+  }
+
+  $("btnCheck").onclick = () => post("api/check");
+  $("btnRestore").onclick = () => {
+    const file = $("backups").value;
+    if (!file) { showStatus("error", "Pick a backup to restore first."); return; }
+    post("api/restore", { file });
+  };
+
+  // Wipe goes through a confirm modal
+  $("btnWipe").onclick = () => $("modal").classList.add("show");
+  $("cancel").onclick = () => $("modal").classList.remove("show");
+  $("confirm").onclick = () => { $("modal").classList.remove("show"); post("api/wipe", { cleanup: $("cleanup").checked }); };
+
+  async function loadBackups() {
+    try {
+      const list = await (await fetch("api/backups")).json();
+      const sel = $("backups");
+      if (!list.length) { sel.innerHTML = '<option value="">No backups yet</option>'; return; }
+      sel.innerHTML = list.map((b) => {
+        const when = b.createdAt ? new Date(b.createdAt).toLocaleString() : b.name;
+        const dev = b.devices == null ? "" : `${b.devices} device(s)`;
+        const empty = b.devices === 0 ? " ⚠ empty network" : "";
+        return `<option value="${b.file}">${when} — network ${b.homeId||"?"}, ${dev}${empty}</option>`;
+      }).join("");
+    } catch {}
+  }
+  loadBackups();
+</script>
+</body>
+</html>

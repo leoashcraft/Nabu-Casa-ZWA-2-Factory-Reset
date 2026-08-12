@@ -15,8 +15,7 @@ RUN apk add --no-cache --virtual .build python3 make g++ linux-headers \
     && apk del .build \
     && npm cache clean --force
 
-# App code and launcher change often; keep them in later, cheap layers.
-COPY cli.mjs ./
-COPY run.sh /
-RUN chmod a+x /run.sh
-CMD [ "/run.sh" ]
+# App code and UI change often; keep them in later, cheap layers.
+COPY cli.mjs server.mjs ./
+COPY www ./www
+CMD [ "node", "/app/server.mjs" ]

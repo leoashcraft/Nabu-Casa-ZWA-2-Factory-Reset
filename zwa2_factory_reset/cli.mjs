@@ -807,6 +807,23 @@ Adapter state:
     console.log("\nRF region already matches the desired value; nothing to change.");
   }
 
+  if (flags.resultJson) {
+    try {
+      fs.writeFileSync(
+        flags.resultJson,
+        JSON.stringify({
+          homeId: c.homeId?.toString(16) ?? null,
+          nodeCount: nodes.length,
+          deviceCount: devices,
+          region: await c.getRFRegion().catch(() => region),
+          regionName: regionName(await c.getRFRegion().catch(() => region)),
+        }),
+      );
+    } catch {
+      /* best effort */
+    }
+  }
+
   await safeDestroy(driver);
   process.exit(0);
 }
