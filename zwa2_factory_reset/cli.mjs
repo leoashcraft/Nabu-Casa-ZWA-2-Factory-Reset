@@ -56,6 +56,13 @@ function makeProgressPrinter(label) {
   };
 }
 
+/** How to phrase "undo this" — overridable so wrappers (e.g. the HA add-on)
+ * can show instructions that make sense in their UI instead of a node command. */
+function restoreHint(file) {
+  const t = process.env.ZWA2_RESTORE_HINT;
+  return t ? t.replaceAll("{file}", file) : `node cli.mjs --restore "${file}"`;
+}
+
 // --------------------------------------------------------------- arg parsing
 
 const args = process.argv.slice(2);
@@ -67,6 +74,7 @@ const flags = {
   yes: args.includes("--yes") || args.includes("-y"),
   noBackup: args.includes("--no-backup"),
   list: args.includes("--list"),
+  info: args.includes("--info"),
   help: args.includes("--help") || args.includes("-h"),
 };
 
@@ -88,6 +96,7 @@ zwa2-factory-reset — safely factory-reset a ZWA-2 Z-Wave adapter
 USAGE
   node cli.mjs [options]              wipe the adapter (default action)
   node cli.mjs --list                 list detected serial ports and exit
+  node cli.mjs --info                 show the adapter's state, change nothing
   node cli.mjs --restore <file>       restore a previous NVM backup
 
 OPTIONS
@@ -411,6 +420,24 @@ Adapter state:
     try {
       const nvm = await ctrl.backupNVMRaw(makeProgressPrinter("backup"));
       fs.writeFileSync(backupFile, nvm);
+      // Sidecar so a human (or the restore flow) can tell what's inside
+      fs.writeFileSync(
+        backupFile + ".json",
+        JSON.stringify(
+          {
+            homeId: before.homeId,
+            nodeCount: before.nodes.length,
+            nodes: before.nodes,
+            firmware: before.firmware,
+            sdk: before.sdk,
+            region: before.region,
+            regionName: regionName(before.region),
+            createdAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+      );
       console.log(`  Backup complete (${nvm.length} bytes).`);
     } catch (e) {
       console.error(`NVM backup failed: ${e.message}`);
@@ -460,7 +487,7 @@ async function verifyAndFinish(portPath, before, backupFile) {
   2. If it is still stuck, use the official recovery tool in Chrome/Edge:
      https://home-assistant.github.io/zwa2-toolbox/  →  "Recover adapter"${backupFile ? `
   3. Your NVM backup is safe at: ${backupFile}
-     You can restore it later with:  node cli.mjs --restore "${backupFile}"` : ""}`);
+     You can restore it later with:  ${restoreHint(backupFile)}` : ""}`);
       process.exit(1);
     }
   }
@@ -499,7 +526,7 @@ Done. Next steps:
     it) or factory-reset per their manuals before they can be re-paired.
   • If re-adding to Home Assistant, removing and re-adding the Z-Wave
     integration is the cleanest path.${backupFile ? `
-  • To undo this wipe:  node cli.mjs --restore "${backupFile}"` : ""}
+  • To undo this wipe:  ${restoreHint(backupFile)}` : ""}
 `);
   process.exit(0);
 }
@@ -556,6 +583,24 @@ async function restoreFlow() {
   }
   const nvmData = fs.readFileSync(file);
   console.log(`Backup file: ${file} (${nvmData.length} bytes)`);
+  if (fs.existsSync(file + ".json")) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(file + ".json", "utf8"));
+      const devices = Math.max(0, (meta.nodeCount ?? 1) - 1);
+      console.log(
+        `Backup contents: network ${meta.homeId}, ${devices} paired device${devices === 1 ? "" : "s"}, ` +
+          `region ${meta.regionName ?? "unknown"}, taken ${meta.createdAt ?? "unknown"}`,
+      );
+      if (devices === 0) {
+        console.log("⚠ WARNING: this backup contains an EMPTY network (it was likely taken right after a wipe).");
+        console.log("  If you meant to bring your devices back, pick an older backup with paired devices.");
+      }
+    } catch {
+      console.log("(Backup metadata sidecar exists but could not be read.)");
+    }
+  } else {
+    console.log("(No metadata sidecar next to this backup — contents unknown until restored.)");
+  }
 
   const portPath = await resolvePort();
   console.log(`\nConnecting to ${portPath} ...`);
@@ -606,6 +651,29 @@ async function restoreFlow() {
   process.exit(0);
 }
 
+async function infoFlow() {
+  const portPath = await resolvePort();
+  console.log(`\nConnecting to ${portPath} (read-only check)...`);
+  const { driver, mode } = await connect(portPath);
+  if (mode === "bootloader") {
+    console.log("Adapter is in BOOTLOADER mode (no Z-Wave application running).");
+    console.log("A wipe run can recover this; or unplug/replug the adapter to try restarting it.");
+    await safeDestroy(driver);
+    process.exit(0);
+  }
+  const c = driver.controller;
+  const region = await c.getRFRegion().catch(() => undefined);
+  const nodes = [...c.nodes.keys()];
+  console.log(`
+Adapter state (nothing was changed):
+  Home ID:    ${c.homeId?.toString(16)}
+  Nodes:      ${nodes.join(", ")} (${Math.max(0, nodes.length - 1)} paired device(s) besides the controller)
+  Firmware:   ${c.firmwareVersion} (SDK ${c.sdkVersion})
+  RF region:  ${regionName(region)}`);
+  await safeDestroy(driver);
+  process.exit(0);
+}
+
 async function listFlow() {
   const ports = await SerialPort.list();
   if (ports.length === 0) {
@@ -639,6 +707,7 @@ process.on("unhandledRejection", (e) => {
 
 try {
   if (flags.list) await listFlow();
+  else if (flags.info) await infoFlow();
   else if (flags.restore) await restoreFlow();
   else await wipeFlow();
 } catch (e) {

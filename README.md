@@ -83,10 +83,10 @@ If you run **Home Assistant OS or Supervised**, you can run this tool directly o
 1. Settings → Add-ons → Add-on Store → ⋮ (top right) → **Repositories** → add
    `https://github.com/leoashcraft/zwa2-factory-reset`
 2. Install **ZWA-2 Factory Reset** from the store.
-3. **Stop the Z-Wave JS add-on first** (the serial port must be free).
-4. In the add-on Configuration tab set `confirm: true`, then start the add-on and watch the log. Backups land in `/share/zwa2-factory-reset/backups/`.
+3. Start it as-is first: the default action is a **read-only `check`** that just reports what's on the adapter.
+4. To actually wipe: set `action: wipe` and `confirm: true` in Configuration, then start and watch the log. Backups land in `/share/zwa2-factory-reset/backups/`.
 
-See the [add-on documentation](zwa2_factory_reset/DOCS.md) for all options (restore, port selection, region handling). The add-on wraps the exact same CLI; the packaging is newer and marked experimental. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
+The add-on is built defensively for less-technical users: destructive actions require `confirm: true`, which **auto-resets to `false` after each successful run** so a stray start can never wipe again; it refuses to run while the Z-Wave JS add-on holds the port (or stops/restarts it for you with `manage_zwave_js: true`); every wipe is preceded by a backup with a metadata sidecar, and restoring a backup that contains an empty network triggers a loud warning. See the [add-on documentation](zwa2_factory_reset/DOCS.md) for the full options and a walk-back table. The packaging is newer than the CLI and marked experimental. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
 
 ## RF region
 

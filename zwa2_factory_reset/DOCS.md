@@ -1,37 +1,50 @@
 # ZWA-2 Factory Reset
 
-Factory-resets a Home Assistant Connect ZWA-2 by erasing its NVM from the Gecko bootloader, bypassing the firmware's broken `SetDefault` handler. An NVM backup is always written first so the operation is reversible.
+Factory-resets a Home Assistant Connect ZWA-2 when the normal factory reset silently fails (a known firmware bug). **A backup is always taken first, so everything this add-on does can be undone.**
 
-## ⚠️ Before you start
+## Built-in safety features
 
-1. **Stop the Z-Wave JS add-on** (Settings → Add-ons → Z-Wave JS → Stop). The serial port must be free — this add-on will fail with a port error otherwise.
-2. Understand that a wipe **permanently erases the Z-Wave network** on the adapter: every paired device must be excluded or factory-reset before it can be re-paired.
+- **Nothing destructive can happen by accident.** The default action is `check` (read-only), and a wipe or restore refuses to run unless you set `confirm: true` first.
+- **`confirm` resets itself.** After a successful wipe or restore, the add-on flips `confirm` back to `false`, so starting the add-on again later can't wipe anything.
+- **Automatic backup.** Every wipe saves the adapter's complete network to `/share/zwa2-factory-reset/backups/` *before* touching anything. If the backup fails, the wipe is cancelled.
+- **Z-Wave JS guard.** If the Z-Wave JS add-on is running (it holds the adapter's port), this add-on stops and tells you — it won't fight over the port. Set `manage_zwave_js: true` to have it stopped and restarted for you automatically.
+- **Verification.** After a wipe, the add-on reconnects and confirms the adapter really has a fresh network and is running normally. A watchdog aborts with a clear error rather than hanging forever.
+- **Region preservation.** Wiping resets the adapter's radio region to the factory default (EU). The add-on remembers your region and restores it (`region: keep`, the default) — important if you're not in Europe.
 
-## Options
+## Recommended first run
+
+1. Install the add-on, leave all options at their defaults (`action: check`).
+2. Start it and read the Log tab: you'll see your adapter's Home ID, how many devices are paired, its firmware, and its region. **Nothing is changed.**
+
+## Doing a factory reset
+
+1. In this add-on's **Configuration** tab: set `action: wipe` and `confirm: true`. If you'd like the Z-Wave JS add-on handled for you, also set `manage_zwave_js: true` — otherwise stop it yourself first (Settings → Add-ons → Z-Wave JS → Stop).
+2. **Start** the add-on and watch the **Log** tab. A successful run ends with `✓ Factory reset verified` and a new Home ID.
+3. The log shows exactly where your backup was saved and how to restore it.
+4. `confirm` is automatically set back to `false` for you.
+
+## Undoing things (walking back)
+
+| What happened | How to walk it back |
+|---|---|
+| Wiped and regret it | Set `action: restore` and `restore_file` to the backup path from the log (also visible in `/share/zwa2-factory-reset/backups/`), set `confirm: true`, start the add-on. Your network — Home ID, devices, security keys — comes back exactly as it was. |
+| Restored the wrong backup | Restore a different one. Every wipe's backup stays in `/share` until you delete it. Each `.bin` has a `.json` next to it describing what's inside (network ID, device count, date) — and the add-on warns you before restoring a backup that contains an empty network. |
+| Region is wrong after a wipe | Set `action: check` to see the current region. To change it, use the official [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) → Configure (Chrome/Edge), or open an issue and we'll add a region-only action. |
+| Adapter seems dead / stuck in bootloader | The add-on recovers this automatically in most cases. If not: unplug the adapter, wait 5 seconds, plug it back in, run `action: check`. Last resort: [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) → Recover adapter. |
+| Devices show as dead in HA after a wipe | Expected — the old network is gone. Either restore the backup to bring it back, or re-pair each device (they must be excluded or factory-reset per their manuals first). |
+
+## Options reference
 
 | Option | Values | Meaning |
 |---|---|---|
-| `action` | `wipe` / `restore` / `list` | What to do. `list` just prints detected serial ports to the log — a safe first run. |
-| `confirm` | `true` / `false` | Must be `true` for a wipe to proceed. Safety interlock. |
-| `port` | `auto` or a device path | `auto` finds the ZWA-2 by its USB IDs. Otherwise e.g. `/dev/serial/by-id/usb-Nabu_Casa_ZWA-2_...` |
-| `region` | `keep` / `default` / region name | `keep` restores the RF region the stick had before the wipe (recommended). `default` leaves the firmware default (EU). Or name one, e.g. `Europe`, `USA (Long Range)`. |
-| `restore_file` | path | For `action: restore` — a backup file, e.g. `/share/zwa2-factory-reset/backups/zwa2-nvm-xxxx.bin` |
+| `action` | `check` / `wipe` / `restore` / `list` | `check` = read-only adapter report (default, safe). `list` = show serial ports. |
+| `confirm` | `true` / `false` | Required for `wipe` and `restore`. Auto-resets to `false` after success. |
+| `manage_zwave_js` | `true` / `false` | Stop the Z-Wave JS add-on before running and restart it after. |
+| `port` | `auto` or a device path | `auto` finds the ZWA-2 by USB IDs or `/dev/serial/by-id` name. |
+| `region` | `keep` / `default` / a region name | `keep` (default) restores your pre-wipe region. `default` leaves the factory EU default. |
+| `restore_file` | path | The `.bin` backup to restore (for `action: restore`). |
 
-## Typical wipe
+## Notes
 
-1. Stop the Z-Wave JS add-on.
-2. Set `action: wipe`, `confirm: true` in Configuration and save.
-3. Start this add-on and watch the Log tab. You should see: backup → `Bootloader reports: NVM erased` → `✓ Factory reset verified` with a **new Home ID**.
-4. Note the backup path printed in the log (kept in `/share/zwa2-factory-reset/backups/`).
-5. Set `confirm` back to `false` (so a stray start can't wipe again).
-6. Start the Z-Wave JS add-on again — or remove/re-add the Z-Wave integration for a clean slate.
-
-## Undo a wipe
-
-Set `action: restore` and `restore_file` to the backup path from the log, then start the add-on. This puts back the complete network (Home ID, nodes, security keys).
-
-## Troubleshooting
-
-- **"Cannot lock port" / port errors** — the Z-Wave JS add-on (or Z-Wave JS UI) is still running. Stop it first.
-- **Stuck in bootloader** — the add-on tries to recover automatically. If it stays stuck, unplug/replug the ZWA-2 and run again with `action: list` to check it's detected. As a last resort use the official [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) "Recover adapter" from Chrome/Edge on another machine.
-- **Verification failed: Home ID unchanged** — re-run the wipe. If it persists, open an issue with the log.
+- Backup files contain your network's security keys. Anyone with the file could impersonate your network — treat backups as sensitive and delete them when no longer needed.
+- This add-on needs the `manager` role to stop/start the Z-Wave JS add-on and to reset its own `confirm` option.
