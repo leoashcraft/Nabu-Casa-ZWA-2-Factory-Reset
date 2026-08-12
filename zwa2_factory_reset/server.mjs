@@ -38,6 +38,7 @@ function broadcast(event) {
 
 function log(line) {
   if (currentJob) currentJob.lines.push(line);
+  console.log(`[job] ${line}`); // also to the add-on log for debugging
   broadcast({ type: "log", line });
 }
 
@@ -270,6 +271,7 @@ async function jobRestore(file) {
 }
 
 async function startJob(type, run) {
+  console.log(`[server] startJob(${type}) requested`);
   if (currentJob?.running) return false;
   currentJob = { type, running: true, lines: [], status: "running", message: "" };
   broadcast({ type: "start", job: type });
@@ -335,6 +337,7 @@ const server = http.createServer(async (req, res) => {
   // Ingress strips its prefix before proxying, so paths arrive normalized.
   const url = new URL(req.url, "http://x");
   const p = url.pathname.replace(/\/+$/, "") || "/";
+  if (p !== "/api/events") console.log(`[http] ${req.method} ${req.url} -> ${p}`);
 
   if (p === "/" && req.method === "GET") {
     return send(res, 200, "text/html; charset=utf-8", fs.readFileSync(path.join(DIR, "www", "index.html")));
