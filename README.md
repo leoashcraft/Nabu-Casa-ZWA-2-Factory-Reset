@@ -76,17 +76,18 @@ node cli.mjs --restore backups/zwa2-nvm-<homeid>-<timestamp>.bin
 
 This restores the complete network — Home ID, paired nodes, security keys — exactly as it was.
 
-## Home Assistant add-on (experimental)
+## Home Assistant add-on
 
 If you run **Home Assistant OS or Supervised**, you can run this tool directly on your HA box instead of a separate computer:
 
 1. Settings → Add-ons → Add-on Store → ⋮ (top right) → **Repositories** → add
    `https://github.com/leoashcraft/zwa2-factory-reset`
 2. Install **ZWA-2 Factory Reset** from the store.
-3. Start it as-is first: the default action is a **read-only `check`** that just reports what's on the adapter.
-4. To actually wipe: set `action: wipe` and `confirm: true` in Configuration, then start and watch the log. Backups land in `/share/zwa2-factory-reset/backups/`.
+3. Start it as-is first: the default action is a read-only **`check`** that reports what's on the adapter (and, after a wipe, verifies the result and restores the RF region).
+4. To wipe: set `action: wipe` and `confirm: true` in Configuration, leave `manage_zwave_js: true`, then Start and watch the log. Backups land in `/share/zwa2-factory-reset/backups/`.
+5. **Finish with a check.** On HA OS the adapter's USB re-enumerates when it restarts after the wipe and the host briefly grabs the port, so the wipe can't verify itself or restore the region in the same run. When the log says so, set `action: check` (leave `region: keep`) and Start again — it runs on a settled port, confirms the new Home ID with no devices, and restores your region from the backup. (Z-Wave JS also re-applies its configured region when it restarts, so this is often already correct.)
 
-The add-on is built defensively for less-technical users: destructive actions require `confirm: true`, which **auto-resets to `false` after each successful run** so a stray start can never wipe again; it refuses to run while the Z-Wave JS add-on holds the port (or stops/restarts it for you with `manage_zwave_js: true`); every wipe is preceded by a backup with a metadata sidecar, and restoring a backup that contains an empty network triggers a loud warning. See the [add-on documentation](zwa2_factory_reset/DOCS.md) for the full options and a walk-back table. The packaging is newer than the CLI and marked experimental. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
+The add-on is built defensively for less-technical users: destructive actions require `confirm: true`, which **auto-resets to `false` after each successful run** so a stray start can never wipe again; it refuses to run while the Z-Wave JS add-on holds the port (or stops/restarts it for you with `manage_zwave_js: true`); every wipe is preceded by a backup with a metadata sidecar, and restoring a backup that contains an empty network triggers a loud warning. See the [add-on documentation](zwa2_factory_reset/DOCS.md) for the full options and a walk-back table. Tested on Home Assistant OS with a real ZWA-2. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
 
 ## RF region
 
