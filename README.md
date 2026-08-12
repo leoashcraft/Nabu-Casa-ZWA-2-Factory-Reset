@@ -6,10 +6,12 @@ There are **two ways to use it**, same engine underneath — pick whichever fits
 
 | | Best for | What you do |
 |---|---|---|
-| 🖥️ **Standalone command-line tool** | Any computer (macOS/Linux) with the stick plugged in — no Home Assistant needed | `npm install`, then `node cli.mjs` |
+| 🖥️ **Standalone command-line tool** | Any computer with the stick plugged in — no Home Assistant needed | `npm install`, then `node cli.mjs` |
 | 🏠 **Home Assistant add-on** | Home Assistant OS / Supervised users | Add the repo, install, **Open Web UI**, click a button |
 
-No Windows PC, no Z-Wave PC Controller required either way.
+No Z-Wave PC Controller and no Windows-only tooling required either way.
+
+**Supported systems for the standalone tool:** macOS and Linux are tested. **Windows should work too** — Node.js, `serialport`, and `zwave-js` all support it (the adapter appears as a COM port like `COM5`) — but it hasn't been tested on Windows yet, so treat it as best-effort.
 
 ## Table of contents
 
@@ -56,7 +58,7 @@ Home Assistant publishes an official [ZWA-2 Toolbox](https://home-assistant.gith
 
 ## Option A — Standalone command-line tool
 
-Run it on any macOS or Linux computer with the ZWA-2 plugged in. **No Home Assistant required** — handy when your HA install is the thing that's misbehaving, or you just want to wipe a stick on a laptop.
+Run it on any computer with the ZWA-2 plugged in (macOS and Linux tested; Windows should work — see the note above). **No Home Assistant required** — handy when your HA install is the thing that's misbehaving, or you just want to wipe a stick on a laptop.
 
 ### Install
 
@@ -76,7 +78,7 @@ Plug in the adapter, then:
 node cli.mjs
 ```
 
-The tool auto-detects the ZWA-2 by its USB identifiers (Espressif `303a:4001`, manufacturer "Nabu Casa"). If more than one is plugged in you'll be asked which one to target; if none is detected you can pick any serial port manually. **Close anything else using the stick first** (Home Assistant, Z-Wave JS UI, etc.) — the port must be free.
+The tool auto-detects the ZWA-2 by its USB identifiers (Espressif `303a:4001`, manufacturer "Nabu Casa"). If more than one is plugged in you'll be asked which one to target; if none is detected you can pick a port manually — `--port /dev/cu.usbmodemXXXX` on macOS, `--port /dev/ttyACM0` on Linux, or `--port COM5` on Windows. **Close anything else using the stick first** (Home Assistant, Z-Wave JS UI, etc.) — the port must be free.
 
 You'll see the adapter's current state, an NVM backup will be written to `./backups/`, and you must type `WIPE` to confirm before anything destructive happens.
 
@@ -128,7 +130,7 @@ Erasing the NVM resets the radio region to the firmware default. Because not eve
 
 ## Troubleshooting
 
-**"Failed to open the serial port" / "Cannot lock port"** — something else has the stick open. Stop Home Assistant / Z-Wave JS UI or any other process using it (`lsof /dev/cu.usbmodem*` on macOS, `lsof /dev/ttyACM*` on Linux).
+**"Failed to open the serial port" / "Cannot lock port"** — something else has the stick open. Stop Home Assistant / Z-Wave JS UI or any other process using it (`lsof /dev/cu.usbmodem*` on macOS, `lsof /dev/ttyACM*` on Linux; on Windows, close any serial monitor / Z-Wave software holding the COM port).
 
 **Adapter stuck in bootloader mode** — the tool detects this on connect and on verify, and will try to start the application firmware for you. If it stays stuck: unplug it, wait 5 seconds, plug it back in, and re-run. Still stuck? Use **Recover adapter** in the official [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) (Chrome/Edge). Your NVM backup remains valid either way.
 
