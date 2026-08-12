@@ -74,21 +74,33 @@ let stoppedSlugs = [];
 
 async function ensurePortFree() {
   stoppedSlugs = [];
-  const list = await sv("GET", "/addons");
-  const installed = new Set((list.json?.data?.addons ?? []).map((a) => a.slug));
+  if (!TOKEN) {
+    log("⚠ No Supervisor token available — cannot manage Z-Wave JS automatically.");
+    return;
+  }
+  // Probe each known Z-Wave JS slug directly (no /addons list dependency).
   for (const slug of ZWJS_SLUGS) {
-    if (!installed.has(slug)) continue;
     const info = await sv("GET", `/addons/${slug}/info`);
-    if (info.json?.data?.state === "started") {
+    if (!info.ok) {
+      // 404 just means "not installed"; surface anything else so port-lock
+      // failures are diagnosable instead of silently skipped.
+      if (info.status !== 404) log(`(could not query ${slug}: HTTP ${info.status})`);
+      continue;
+    }
+    const state = info.json?.data?.state;
+    if (state === "started") {
       log(`Stopping ${slug} to free the adapter (it will be restarted afterwards)...`);
       const r = await sv("POST", `/addons/${slug}/stop`);
       if (r.ok) {
         stoppedSlugs.push(slug);
         await new Promise((res) => setTimeout(res, 3000));
       } else {
-        throw new Error(`Could not stop ${slug} (HTTP ${r.status}). Stop it manually and try again.`);
+        throw new Error(`Could not stop ${slug} (HTTP ${r.status} ${r.text?.slice(0, 160) || ""}). Stop it manually and try again.`);
       }
     }
+  }
+  if (stoppedSlugs.length === 0) {
+    log("(No running Z-Wave JS add-on was found to stop — assuming the adapter is free.)");
   }
 }
 
