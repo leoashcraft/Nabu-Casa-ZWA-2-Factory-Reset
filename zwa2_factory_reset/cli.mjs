@@ -16,6 +16,10 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 // ---------------------------------------------------------------- constants
 
@@ -27,7 +31,9 @@ const KNOWN_ADAPTERS = [
 ];
 
 const CONNECT_TIMEOUT_MS = 60_000;
-const REVERIFY_DELAY_MS = 2_000;
+// After the bootloader exits, the ZWA-2's USB bridge fully re-enumerates, which
+// takes several seconds. Wait before the first verify attempt, then retry.
+const REVERIFY_DELAY_MS = 5_000;
 const WATCHDOG_MS = 15 * 60_000;
 
 // Watchdog: whatever happens, never hang forever (important when running
@@ -77,6 +83,14 @@ const flags = {
   info: args.includes("--info"),
   resultJson: getFlagValue("--result-json"),
   help: args.includes("--help") || args.includes("-h"),
+  // Internal: post-wipe verification runs in a fresh child process so the
+  // erase phase's serial file descriptor is fully gone (the kernel holds an
+  // advisory lock on the port until the owning process exits — reconnecting
+  // in-process after the bootloader re-enumerates USB hits "Cannot lock port").
+  verifyWipe: args.includes("--verify-wipe"),
+  expectOldHomeId: getFlagValue("--expect-old-home-id"),
+  oldRegion: getFlagValue("--old-region"),
+  backupFile: getFlagValue("--backup-file"),
 };
 
 function getFlagValue(name) {
@@ -199,7 +213,7 @@ async function connect(portPath) {
  * Connect with retries — right after a wipe or restore the adapter reboots
  * and (on some platforms) re-enumerates on USB, so the first attempt can fail.
  */
-async function connectWithRetry(portPath, attempts = 4) {
+async function connectWithRetry(portPath, attempts = 6) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     if (i > 0) {
@@ -499,8 +513,41 @@ Adapter state:
   await verifyAndFinish(portPath, before, backupFile);
 }
 
-async function verifyAndFinish(portPath, before, backupFile) {
-  console.log("\nVerifying the reset...");
+/**
+ * Parent side: after the erase, hand verification to a brand-new process.
+ * This process still holds the (now-defunct) serial fd from the bootloader
+ * phase; only a fresh process gets a clean fd table and can reopen the port.
+ */
+function verifyAndFinish(portPath, before, backupFile) {
+  const childArgs = [
+    SCRIPT_PATH,
+    "--verify-wipe",
+    "--yes",
+    "--port",
+    portPath,
+    "--region",
+    flags.region ?? "keep",
+  ];
+  if (before.homeId) childArgs.push("--expect-old-home-id", before.homeId);
+  if (before.region !== undefined && before.region !== null) {
+    childArgs.push("--old-region", String(before.region));
+  }
+  if (backupFile) childArgs.push("--backup-file", backupFile);
+  if (flags.resultJson) childArgs.push("--result-json", flags.resultJson);
+
+  console.log("\nVerifying the reset (in a fresh process)...");
+  const child = spawnSync(process.execPath, childArgs, { stdio: "inherit" });
+  process.exit(child.status ?? 1);
+}
+
+async function verifyWipeChildFlow() {
+  const portPath = flags.port || (await resolvePort());
+  const before = {
+    homeId: flags.expectOldHomeId,
+    region: flags.oldRegion !== undefined ? Number(flags.oldRegion) : undefined,
+  };
+  const backupFile = flags.backupFile;
+
   await new Promise((r) => setTimeout(r, REVERIFY_DELAY_MS));
 
   let { driver, mode } = await connectWithRetry(portPath);
@@ -765,7 +812,8 @@ process.on("unhandledRejection", (e) => {
 });
 
 try {
-  if (flags.list) await listFlow();
+  if (flags.verifyWipe) await verifyWipeChildFlow();
+  else if (flags.list) await listFlow();
   else if (flags.info) await infoFlow();
   else if (flags.restore) await restoreFlow();
   else await wipeFlow();
