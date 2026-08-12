@@ -201,6 +201,8 @@ case "${ACTION}" in
         rm -f "${RESULT_JSON}"
         node /app/cli.mjs "${ARGS[@]}" --region "${REGION}" --result-json "${RESULT_JSON}"
         RC=$?
+        # RC 0 = fully verified; RC 3 = erased OK but couldn't reopen to
+        # verify/restore-region (still a successful wipe); other = real failure.
         if [ ${RC} -eq 0 ] && [ "${CLEANUP_HA}" = "true" ] && [ -s "${RESULT_JSON}" ]; then
             OLD_DEC=$(jq -r '.oldHomeIdDecimal' "${RESULT_JSON}")
             OLD_HEX=$(jq -r '.oldHomeId' "${RESULT_JSON}")
@@ -209,9 +211,13 @@ case "${ACTION}" in
             bashio::log.info "Tip: the old network's devices will show as dead in Home Assistant."
             bashio::log.info "Set 'cleanup_ha_devices: true' to have ONLY that network's integration entry removed automatically,"
             bashio::log.info "or remove it yourself: Settings → Devices & Services → Z-Wave."
+        elif [ ${RC} -eq 3 ]; then
+            bashio::log.warning "Wipe completed, but the adapter could not be reopened to verify/restore region (see above)."
         fi
         restart_stopped
-        [ ${RC} -eq 0 ] && reset_confirm
+        # confirm auto-resets after a successful (0) or partial-success (3) wipe
+        { [ ${RC} -eq 0 ] || [ ${RC} -eq 3 ]; } && reset_confirm
+        [ ${RC} -eq 3 ] && exit 0
         exit ${RC}
         ;;
     *)

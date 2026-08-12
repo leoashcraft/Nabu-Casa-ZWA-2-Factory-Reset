@@ -214,21 +214,34 @@ async function connect(portPath) {
  * Connect with retries — right after a wipe or restore the adapter reboots
  * and (on some platforms) re-enumerates on USB, so the first attempt can fail.
  */
-async function connectWithRetry(portPath, attempts = 6) {
+/**
+ * Retry connecting for up to `maxSeconds`. After the bootloader exits and the
+ * ZWA-2 re-enumerates, the host may hold the port for a while — most often
+ * ModemManager probing the new /dev/ttyACM* device (the classic Z-Wave/Zigbee
+ * "Cannot lock port" for ~30-60s), which releases it once its probe times out.
+ * So we out-wait it rather than fail fast.
+ */
+async function connectWithRetry(portPath, maxSeconds = 120) {
+  const deadline = Date.now() + maxSeconds * 1000;
   let lastErr;
-  for (let i = 0; i < attempts; i++) {
-    if (i > 0) {
-      const delay = 3_000 * i;
-      console.log(`  (connect attempt ${i} failed: ${lastErr.message} — retrying in ${delay / 1000}s)`);
-      await new Promise((r) => setTimeout(r, delay));
-    }
+  let attempt = 0;
+  let lastNotice = 0;
+  while (Date.now() < deadline) {
     try {
       return await connect(portPath);
     } catch (e) {
       lastErr = e;
     }
+    attempt++;
+    // Keep the log calm: note progress at most every ~20s.
+    if (Date.now() - lastNotice > 20_000) {
+      const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+      console.log(`  (adapter port still busy — likely the OS probing the re-enumerated device; still trying, ~${left}s left)`);
+      lastNotice = Date.now();
+    }
+    await new Promise((r) => setTimeout(r, 4_000));
   }
-  throw lastErr;
+  throw lastErr ?? new Error("could not open the serial port");
 }
 
 // ------------------------------------------------------------ port handling
@@ -476,6 +489,8 @@ async function wipeFlow() {
   if (flags.resultJson) verifyArgs.push("--result-json", flags.resultJson);
 
   const verify = spawnSync(process.execPath, verifyArgs, { stdio: "inherit" });
+  // Exit codes: 0 = fully verified, 3 = erased but couldn't reopen to
+  // verify/restore-region (still a successful wipe), other = real failure.
   process.exit(verify.status ?? 1);
 }
 
@@ -580,7 +595,30 @@ async function verifyWipeChildFlow() {
 
   await new Promise((r) => setTimeout(r, REVERIFY_DELAY_MS));
 
-  let { driver, mode } = await connectWithRetry(portPath);
+  let driver, mode;
+  try {
+    ({ driver, mode } = await connectWithRetry(portPath));
+  } catch (e) {
+    // The erase already succeeded (phase 1 confirmed "NVM erased" from the
+    // bootloader, and the orchestrator only runs us on phase-1 success). We
+    // just couldn't reopen the port to double-check / restore the region —
+    // typically because the host reclaimed the re-enumerated device. This is
+    // NOT a wipe failure; report it as a partial success (exit 3).
+    console.log(`
+⚠ The wipe completed (the bootloader confirmed the NVM was erased), but this
+  tool could not reopen the adapter afterwards to double-check it or restore
+  the RF region. Something on the system reclaimed the port after the adapter
+  restarted (last error: ${e.message}).
+
+  Your adapter IS wiped. Two follow-ups:
+   • If you are not in the EU, set your RF region: use the Configure tool at
+     https://home-assistant.github.io/zwa2-toolbox/ (Chrome/Edge), or your
+     Z-Wave software's region setting.
+   • To confirm the wipe, run this tool's read-only check — it should show a
+     new Home ID with no paired devices.${backupFile ? `
+   • Backup (to undo): ${restoreHint(backupFile)}` : ""}`);
+    process.exit(3);
+  }
 
   if (mode === "bootloader") {
     // One rescue attempt, then bail with instructions
