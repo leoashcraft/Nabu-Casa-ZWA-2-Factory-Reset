@@ -13,7 +13,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.ZWA2_PORT) || 8099;
 const BACKUP_DIR = process.env.ZWA2_BACKUP_DIR || "/share/zwa2-factory-reset/backups";
 const RESULT_JSON = "/tmp/zwa2-result.json";
-const TOKEN = process.env.SUPERVISOR_TOKEN;
+const TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HASSIO_TOKEN;
 
 // Z-Wave JS add-on slugs that may hold the serial port.
 const ZWJS_SLUGS = ["core_zwave_js", "a0d7b954_zwavejsui", "a0d7b954_zwavejs2mqtt"];

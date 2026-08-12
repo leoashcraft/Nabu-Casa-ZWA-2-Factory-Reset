@@ -18,4 +18,7 @@ RUN apk add --no-cache --virtual .build python3 make g++ linux-headers \
 # App code and UI change often; keep them in later, cheap layers.
 COPY cli.mjs server.mjs ./
 COPY www ./www
-CMD [ "node", "/app/server.mjs" ]
+COPY run.sh /
+RUN chmod a+x /run.sh
+# Launch via with-contenv so SUPERVISOR_TOKEN and friends are in the env.
+CMD [ "/run.sh" ]
