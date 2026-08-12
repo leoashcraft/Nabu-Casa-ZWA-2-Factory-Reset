@@ -13,6 +13,8 @@ No Z-Wave PC Controller and no Windows-only tooling required either way.
 
 **Supported systems for the standalone tool:** macOS and Linux are tested. **Windows should work too** — Node.js, `serialport`, and `zwave-js` all support it (the adapter appears as a COM port like `COM5`) — but it hasn't been tested on Windows yet, so treat it as best-effort.
 
+![The ZWA-2 Factory Reset Home Assistant add-on web UI](img/zwa2-factory-reset-screenshot.avif)
+
 ## Table of contents
 
 - [The problem this solves](#the-problem-this-solves)
