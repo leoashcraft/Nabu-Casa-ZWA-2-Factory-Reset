@@ -88,6 +88,8 @@ const flags = {
   // advisory lock on the port until the owning process exits — reconnecting
   // in-process after the bootloader re-enumerates USB hits "Cannot lock port").
   verifyWipe: args.includes("--verify-wipe"),
+  wipeErase: args.includes("--wipe-erase"),
+  handoff: getFlagValue("--handoff"),
   expectOldHomeId: getFlagValue("--expect-old-home-id"),
   oldRegion: getFlagValue("--old-region"),
   backupFile: getFlagValue("--backup-file"),
@@ -417,38 +419,89 @@ async function eraseNVMViaBootloader(driver) {
 
 // --------------------------------------------------------------- main flows
 
+/**
+ * Orchestrator. The erase and the verify MUST run in separate, sequential
+ * processes: calling leaveBootloader() re-enumerates the ZWA-2's USB serial
+ * device, and the process that did so keeps a lingering fd/advisory-lock on the
+ * port until it exits. So we run the erase in a child that fully exits, THEN a
+ * second child opens the freshly-re-enumerated port to verify. The orchestrator
+ * itself never opens the serial port, so it never holds the lock.
+ */
 async function wipeFlow() {
   const portPath = await resolvePort();
 
+  // Confirmation gate (children run with --yes)
+  if (!flags.yes) {
+    console.log("This will PERMANENTLY erase the Z-Wave network on this adapter.");
+    console.log("Every paired device will need to be excluded/reset and re-paired afterwards.");
+    console.log("A backup is taken first, so this can be undone.");
+    const a = await rl.question('Type "WIPE" to continue: ');
+    if (a.trim() !== "WIPE") {
+      console.log("Aborted. Nothing was changed.");
+      process.exit(0);
+    }
+  }
+
+  const handoffFile = path.join(os.tmpdir(), `zwa2-handoff-${process.pid}.json`);
+
+  // ---- Phase 1: erase (separate process, exits when done → releases the port)
+  const eraseArgs = [
+    SCRIPT_PATH, "--wipe-erase", "--yes",
+    "--port", portPath,
+    "--backup-dir", flags.backupDir,
+    "--handoff", handoffFile,
+  ];
+  if (flags.noBackup) eraseArgs.push("--no-backup");
+  const erase = spawnSync(process.execPath, eraseArgs, { stdio: "inherit" });
+  if (erase.status !== 0) process.exit(erase.status ?? 1);
+
+  let handoff = {};
+  try {
+    handoff = JSON.parse(fs.readFileSync(handoffFile, "utf8"));
+    fs.unlinkSync(handoffFile);
+  } catch {
+    // No handoff — treat old state as unknown; verify still checks the result.
+  }
+
+  // ---- Phase 2: verify (fresh process, opens the re-enumerated port)
+  const verifyArgs = [
+    SCRIPT_PATH, "--verify-wipe", "--yes",
+    "--port", portPath,
+    "--region", flags.region ?? "keep",
+  ];
+  if (handoff.oldHomeId) verifyArgs.push("--expect-old-home-id", handoff.oldHomeId);
+  if (handoff.oldRegion !== undefined && handoff.oldRegion !== null) {
+    verifyArgs.push("--old-region", String(handoff.oldRegion));
+  }
+  if (handoff.backupFile) verifyArgs.push("--backup-file", handoff.backupFile);
+  if (flags.resultJson) verifyArgs.push("--result-json", flags.resultJson);
+
+  const verify = spawnSync(process.execPath, verifyArgs, { stdio: "inherit" });
+  process.exit(verify.status ?? 1);
+}
+
+/** Phase 1 process: connect, back up, erase via bootloader, then EXIT. */
+async function wipeEraseFlow() {
+  const portPath = flags.port || (await resolvePort());
   console.log(`\nConnecting to ${portPath} ...`);
   let { driver, mode } = await connect(portPath);
 
+  let before = { homeId: undefined, region: undefined };
+  let backupFile;
+
   if (mode === "bootloader") {
-    console.log("⚠ Adapter is currently stuck in bootloader mode (likely from a previous attempt).");
-    if (!flags.yes) {
-      const a = await rl.question("Erase NVM from here and restart it? [Y/n] ");
-      if (a.trim().toLowerCase() === "n") {
-        await safeDestroy(driver);
-        process.exit(0);
-      }
-    }
-    await eraseNVMViaBootloader(driver);
-    await safeDestroy(driver);
-    await verifyAndFinish(portPath, { homeId: undefined, region: undefined });
-    return;
-  }
-
-  // ---- gather pre-wipe state
-  const ctrl = driver.controller;
-  const before = {
-    homeId: ctrl.homeId?.toString(16),
-    nodes: [...ctrl.nodes.keys()],
-    firmware: ctrl.firmwareVersion,
-    sdk: ctrl.sdkVersion,
-    region: await ctrl.getRFRegion().catch(() => undefined),
-  };
-
-  console.log(`
+    console.log("⚠ Adapter is in bootloader mode (likely from a previous attempt) — erasing from here.");
+    console.log("(Cannot back up NVM in bootloader mode; proceeding with erase.)");
+  } else {
+    const ctrl = driver.controller;
+    before = {
+      homeId: ctrl.homeId?.toString(16),
+      nodes: [...ctrl.nodes.keys()],
+      firmware: ctrl.firmwareVersion,
+      sdk: ctrl.sdkVersion,
+      region: await ctrl.getRFRegion().catch(() => undefined),
+    };
+    console.log(`
 Adapter state:
   Home ID:    ${before.homeId}
   Nodes:      ${before.nodes.join(", ")} (${before.nodes.length} total)
@@ -456,88 +509,66 @@ Adapter state:
   RF region:  ${regionName(before.region)}
 `);
 
-  // ---- backup
-  let backupFile;
-  if (flags.noBackup) {
-    console.log("Skipping NVM backup (--no-backup).");
-  } else {
-    fs.mkdirSync(flags.backupDir, { recursive: true });
-    backupFile = path.join(flags.backupDir, `zwa2-nvm-${before.homeId}-${ts()}.bin`);
-    console.log(`Backing up NVM to ${backupFile} ...`);
+    if (flags.noBackup) {
+      console.log("Skipping NVM backup (--no-backup).");
+    } else {
+      fs.mkdirSync(flags.backupDir, { recursive: true });
+      backupFile = path.join(flags.backupDir, `zwa2-nvm-${before.homeId}-${ts()}.bin`);
+      console.log(`Backing up NVM to ${backupFile} ...`);
+      try {
+        const nvm = await ctrl.backupNVMRaw(makeProgressPrinter("backup"));
+        fs.writeFileSync(backupFile, nvm);
+        fs.writeFileSync(
+          backupFile + ".json",
+          JSON.stringify(
+            {
+              homeId: before.homeId,
+              nodeCount: before.nodes.length,
+              nodes: before.nodes,
+              firmware: before.firmware,
+              sdk: before.sdk,
+              region: before.region,
+              regionName: regionName(before.region),
+              createdAt: new Date().toISOString(),
+            },
+            null,
+            2,
+          ),
+        );
+        console.log(`  Backup complete (${nvm.length} bytes).`);
+      } catch (e) {
+        console.error(`NVM backup failed: ${e.message}`);
+        console.error("Refusing to continue without a backup. Re-run with --no-backup to override.");
+        await safeDestroy(driver);
+        process.exit(1);
+      }
+    }
+  }
+
+  // Write the handoff BEFORE the erase, so the verify phase knows the old state
+  // even if this process is killed right after leaveBootloader.
+  if (flags.handoff) {
     try {
-      const nvm = await ctrl.backupNVMRaw(makeProgressPrinter("backup"));
-      fs.writeFileSync(backupFile, nvm);
-      // Sidecar so a human (or the restore flow) can tell what's inside
       fs.writeFileSync(
-        backupFile + ".json",
-        JSON.stringify(
-          {
-            homeId: before.homeId,
-            nodeCount: before.nodes.length,
-            nodes: before.nodes,
-            firmware: before.firmware,
-            sdk: before.sdk,
-            region: before.region,
-            regionName: regionName(before.region),
-            createdAt: new Date().toISOString(),
-          },
-          null,
-          2,
-        ),
+        flags.handoff,
+        JSON.stringify({
+          portPath,
+          oldHomeId: before.homeId ?? null,
+          oldRegion: before.region ?? null,
+          backupFile: backupFile ?? null,
+        }),
       );
-      console.log(`  Backup complete (${nvm.length} bytes).`);
     } catch (e) {
-      console.error(`NVM backup failed: ${e.message}`);
-      console.error("Refusing to continue without a backup. Re-run with --no-backup to override.");
-      await safeDestroy(driver);
-      process.exit(1);
+      console.error(`(could not write handoff file: ${e.message})`);
     }
   }
 
-  // ---- confirm
-  if (!flags.yes) {
-    console.log("This will PERMANENTLY erase the Z-Wave network on this adapter.");
-    console.log("Every paired device will need to be excluded/reset and re-paired afterwards.");
-    const a = await rl.question('Type "WIPE" to continue: ');
-    if (a.trim() !== "WIPE") {
-      console.log("Aborted. Nothing was changed.");
-      await safeDestroy(driver);
-      process.exit(0);
-    }
-  }
-
-  // ---- erase
   await eraseNVMViaBootloader(driver);
   await safeDestroy(driver);
-
-  await verifyAndFinish(portPath, before, backupFile);
-}
-
-/**
- * Parent side: after the erase, hand verification to a brand-new process.
- * This process still holds the (now-defunct) serial fd from the bootloader
- * phase; only a fresh process gets a clean fd table and can reopen the port.
- */
-function verifyAndFinish(portPath, before, backupFile) {
-  const childArgs = [
-    SCRIPT_PATH,
-    "--verify-wipe",
-    "--yes",
-    "--port",
-    portPath,
-    "--region",
-    flags.region ?? "keep",
-  ];
-  if (before.homeId) childArgs.push("--expect-old-home-id", before.homeId);
-  if (before.region !== undefined && before.region !== null) {
-    childArgs.push("--old-region", String(before.region));
-  }
-  if (backupFile) childArgs.push("--backup-file", backupFile);
-  if (flags.resultJson) childArgs.push("--result-json", flags.resultJson);
-
-  console.log("\nVerifying the reset (in a fresh process)...");
-  const child = spawnSync(process.execPath, childArgs, { stdio: "inherit" });
-  process.exit(child.status ?? 1);
+  console.log("Erase phase complete; releasing the port for verification.");
+  // Exit promptly so the OS closes our serial fd and the re-enumerated device
+  // is free for the verify process to open.
+  process.exit(0);
 }
 
 async function verifyWipeChildFlow() {
@@ -813,6 +844,7 @@ process.on("unhandledRejection", (e) => {
 
 try {
   if (flags.verifyWipe) await verifyWipeChildFlow();
+  else if (flags.wipeErase) await wipeEraseFlow();
   else if (flags.list) await listFlow();
   else if (flags.info) await infoFlow();
   else if (flags.restore) await restoreFlow();
