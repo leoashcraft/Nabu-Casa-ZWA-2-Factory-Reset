@@ -31,7 +31,8 @@ Factory-resets a Home Assistant Connect ZWA-2 when the normal factory reset sile
 | Restored the wrong backup | Restore a different one. Every wipe's backup stays in `/share` until you delete it. Each `.bin` has a `.json` next to it describing what's inside (network ID, device count, date) — and the add-on warns you before restoring a backup that contains an empty network. |
 | Region is wrong after a wipe | Set `action: check` to see the current region. To change it, use the official [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) → Configure (Chrome/Edge), or open an issue and we'll add a region-only action. |
 | Adapter seems dead / stuck in bootloader | The add-on recovers this automatically in most cases. If not: unplug the adapter, wait 5 seconds, plug it back in, run `action: check`. Last resort: [ZWA-2 Toolbox](https://home-assistant.github.io/zwa2-toolbox/) → Recover adapter. |
-| Devices show as dead in HA after a wipe | Expected — the old network is gone. Either restore the backup to bring it back, or re-pair each device (they must be excluded or factory-reset per their manuals first). |
+| Devices show as dead in HA after a wipe | Expected — the old network is gone. Either restore the backup to bring it back, or re-pair each device (they must be excluded or factory-reset per their manuals first). To clear the dead entries from HA, set `cleanup_ha_devices: true` before the wipe, or remove the old network's integration entry yourself (Settings → Devices & Services → Z-Wave). |
+| Used `cleanup_ha_devices` and want the devices list back | Restore the NVM backup (`action: restore`), then re-add the Z-Wave integration — HA re-discovers the adapter and re-creates the devices from the restored network. Entity customizations (renames, areas, automations referencing old entity IDs) may need to be redone, so prefer manual cleanup if you're unsure. |
 
 ## Options reference
 
@@ -40,11 +41,19 @@ Factory-resets a Home Assistant Connect ZWA-2 when the normal factory reset sile
 | `action` | `check` / `wipe` / `restore` / `list` | `check` = read-only adapter report (default, safe). `list` = show serial ports. |
 | `confirm` | `true` / `false` | Required for `wipe` and `restore`. Auto-resets to `false` after success. |
 | `manage_zwave_js` | `true` / `false` | Stop the Z-Wave JS add-on before running and restart it after. |
+| `cleanup_ha_devices` | `true` / `false` | After a verified wipe, remove the Home Assistant integration entry (and its devices) that belonged to the **old, wiped network only** — identified by the old network's Home ID, so any other Z-Wave adapters you have are never touched. If more than one entry matches (ambiguous), nothing is removed and you're told to clean up manually. |
 | `port` | `auto` or a device path | `auto` finds the ZWA-2 by USB IDs or `/dev/serial/by-id` name. |
 | `region` | `keep` / `default` / a region name | `keep` (default) restores your pre-wipe region. `default` leaves the factory EU default. |
 | `restore_file` | path | The `.bin` backup to restore (for `action: restore`). |
 
+## What about cached node data?
+
+Two different things get "left behind" by a wipe:
+
+- **Home Assistant's device registry** — the old network's devices linger as dead entries. That's what `cleanup_ha_devices` handles (or manual removal of the old integration entry). Scoped strictly to the wiped network's Home ID.
+- **The Z-Wave JS driver's internal cache** (files inside the Z-Wave JS add-on, keyed by Home ID) — intentionally **left alone**. After a wipe the adapter has a new Home ID, so the old cache files are simply never read again. And if you *restore* your backup, that cache becomes useful again — it saves a full re-interview of every device. Deleting it would only hurt.
+
 ## Notes
 
 - Backup files contain your network's security keys. Anyone with the file could impersonate your network — treat backups as sensitive and delete them when no longer needed.
-- This add-on needs the `manager` role to stop/start the Z-Wave JS add-on and to reset its own `confirm` option.
+- This add-on needs the `manager` role (stop/start Z-Wave JS, reset its own `confirm` option) and Home Assistant API access (for `cleanup_ha_devices`).

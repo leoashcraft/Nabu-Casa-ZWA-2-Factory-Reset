@@ -74,6 +74,7 @@ const flags = {
   noBackup: args.includes("--no-backup"),
   list: args.includes("--list"),
   info: args.includes("--info"),
+  resultJson: getFlagValue("--result-json"),
   help: args.includes("--help") || args.includes("-h"),
 };
 
@@ -512,6 +513,24 @@ async function verifyAndFinish(portPath, before, backupFile) {
   Your backup: ${backupFile}` : ""}`);
     await safeDestroy(driver);
     process.exit(1);
+  }
+
+  // Machine-readable summary for wrappers (e.g. the HA add-on)
+  if (flags.resultJson) {
+    try {
+      fs.writeFileSync(
+        flags.resultJson,
+        JSON.stringify({
+          verified: true,
+          oldHomeId: before.homeId ?? null,
+          oldHomeIdDecimal: before.homeId ? parseInt(before.homeId, 16) : null,
+          newHomeId: after.homeId,
+          backupFile: backupFile ?? null,
+        }),
+      );
+    } catch (e) {
+      console.error(`(could not write result json: ${e.message})`);
+    }
   }
 
   // ---- RF region handling

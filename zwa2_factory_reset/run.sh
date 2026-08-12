@@ -5,6 +5,7 @@ set +e
 ACTION=$(bashio::config 'action')
 CONFIRM=$(bashio::config 'confirm')
 MANAGE_ZWJS=$(bashio::config 'manage_zwave_js')
+CLEANUP_HA=$(bashio::config 'cleanup_ha_devices')
 PORT=$(bashio::config 'port')
 REGION=$(bashio::config 'region')
 RESTORE_FILE=$(bashio::config 'restore_file')
@@ -60,6 +61,72 @@ restart_stopped() {
     done
 }
 
+# Optionally remove the HA integration entry that belonged to the OLD (wiped)
+# network — identified by the old Home ID, so other Z-Wave adapters/networks
+# the user may have are never touched. Devices/entities of that entry are
+# removed by HA along with it.
+cleanup_ha_devices() {
+    local old_dec="$1" old_hex="$2"
+    if [ -z "${old_dec}" ] || [ "${old_dec}" = "null" ]; then
+        bashio::log.warning "Old Home ID unknown — skipping HA device cleanup."
+        return 0
+    fi
+
+    bashio::log.info "Looking for the HA integration entry of the old network (${old_hex})..."
+    # One template call: find zwave_js config entries whose devices carry the
+    # old network's identifiers ("<homeId-decimal>-<nodeId>").
+    local template result
+    template=$(cat <<TEMPLATE
+{% set ns = namespace(entries=[]) %}
+{% for e in integration_entities('zwave_js') %}
+{% set d = device_id(e) %}
+{% if d %}
+{% set ids = device_attr(d, 'identifiers') | string %}
+{% if "'${old_dec}-" in ids %}
+{% set ns.entries = ns.entries + [config_entry_id(e)] %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{{ ns.entries | unique | list | to_json }}
+TEMPLATE
+)
+    result=$(curl -sf -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "http://supervisor/core/api/template" \
+        -d "$(jq -cn --arg t "${template}" '{template: $t}')" 2>/dev/null)
+
+    if [ -z "${result}" ]; then
+        bashio::log.warning "Could not query Home Assistant for old-network devices."
+        bashio::log.warning "Clean up manually: Settings → Devices & Services → Z-Wave → remove the entry whose devices are all dead."
+        return 0
+    fi
+
+    local count entry_id
+    count=$(echo "${result}" | jq 'length' 2>/dev/null || echo 0)
+    if [ "${count}" = "0" ]; then
+        bashio::log.info "No HA integration entry references the old network — nothing to clean up."
+        return 0
+    fi
+    if [ "${count}" != "1" ]; then
+        bashio::log.warning "Found ${count} integration entries referencing the old network — ambiguous, not touching anything."
+        bashio::log.warning "Clean up manually: Settings → Devices & Services → Z-Wave."
+        return 0
+    fi
+
+    entry_id=$(echo "${result}" | jq -r '.[0]')
+    bashio::log.notice "Removing HA integration entry ${entry_id} (old network ${old_hex} and ONLY that network)..."
+    if curl -sf -X DELETE \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        "http://supervisor/core/api/config/config_entries/entry/${entry_id}" > /dev/null 2>&1; then
+        bashio::log.info "Old network's integration entry and its devices removed from Home Assistant."
+        bashio::log.info "When Z-Wave JS starts again, HA will offer to set up the (now blank) adapter fresh."
+    else
+        bashio::log.warning "Could not remove the integration entry automatically."
+        bashio::log.warning "Remove it manually: Settings → Devices & Services → Z-Wave → old entry → Delete."
+    fi
+}
+
 # After a successful destructive run, flip 'confirm' back to false so an
 # accidental later start of this add-on cannot wipe anything.
 reset_confirm() {
@@ -112,8 +179,19 @@ case "${ACTION}" in
             exit 1
         fi
         ensure_port_free
-        node /app/cli.mjs "${ARGS[@]}" --region "${REGION}"
+        RESULT_JSON=/tmp/zwa2-result.json
+        rm -f "${RESULT_JSON}"
+        node /app/cli.mjs "${ARGS[@]}" --region "${REGION}" --result-json "${RESULT_JSON}"
         RC=$?
+        if [ ${RC} -eq 0 ] && [ "${CLEANUP_HA}" = "true" ] && [ -s "${RESULT_JSON}" ]; then
+            OLD_DEC=$(jq -r '.oldHomeIdDecimal' "${RESULT_JSON}")
+            OLD_HEX=$(jq -r '.oldHomeId' "${RESULT_JSON}")
+            cleanup_ha_devices "${OLD_DEC}" "${OLD_HEX}"
+        elif [ ${RC} -eq 0 ] && [ "${CLEANUP_HA}" != "true" ]; then
+            bashio::log.info "Tip: the old network's devices will show as dead in Home Assistant."
+            bashio::log.info "Set 'cleanup_ha_devices: true' to have ONLY that network's integration entry removed automatically,"
+            bashio::log.info "or remove it yourself: Settings → Devices & Services → Z-Wave."
+        fi
         restart_stopped
         [ ${RC} -eq 0 ] && reset_confirm
         exit ${RC}

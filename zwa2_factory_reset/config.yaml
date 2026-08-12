@@ -13,12 +13,14 @@ init: false
 uart: true
 hassio_api: true
 hassio_role: manager
+homeassistant_api: true
 map:
   - share:rw
 options:
   action: check
   confirm: false
   manage_zwave_js: false
+  cleanup_ha_devices: false
   port: auto
   region: keep
   restore_file: ""
@@ -26,6 +28,7 @@ schema:
   action: list(check|wipe|restore|list)
   confirm: bool
   manage_zwave_js: bool
+  cleanup_ha_devices: bool
   port: str
   region: str
   restore_file: str
