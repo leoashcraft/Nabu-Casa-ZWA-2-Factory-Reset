@@ -18,6 +18,15 @@ const TOKEN = process.env.SUPERVISOR_TOKEN || process.env.HASSIO_TOKEN;
 // Z-Wave JS add-on slugs that may hold the serial port.
 const ZWJS_SLUGS = ["core_zwave_js", "a0d7b954_zwavejsui", "a0d7b954_zwavejs2mqtt"];
 
+// Region values the UI may request (validated before passing to the CLI).
+const ALLOWED_REGIONS = new Set([
+  "keep", "default",
+  "USA", "USA (Long Range)", "Europe", "Europe (Long Range)",
+  "Australia/New Zealand", "Hong Kong", "India", "Israel", "Russia",
+  "China", "Japan", "Korea",
+]);
+const safeRegion = (r) => (ALLOWED_REGIONS.has(r) ? r : "keep");
+
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 // ----------------------------------------------------------------- job state
@@ -190,13 +199,13 @@ function readResult() {
 
 // ------------------------------------------------------------------- jobs
 
-async function jobCheck() {
+async function jobCheck(region) {
   await ensurePortFree();
   try {
     try {
       fs.unlinkSync(RESULT_JSON);
     } catch {}
-    const rc = await runCli(["--info", "--yes", "--region", "keep", "--backup-dir", BACKUP_DIR, "--result-json", RESULT_JSON]);
+    const rc = await runCli(["--info", "--yes", "--region", region, "--backup-dir", BACKUP_DIR, "--result-json", RESULT_JSON]);
     const info = readResult();
     if (rc === 0 && info) {
       setStatus("done", `Adapter Home ID ${info.homeId}, ${info.deviceCount} paired device(s), region ${info.regionName}.`);
@@ -210,13 +219,13 @@ async function jobCheck() {
   }
 }
 
-async function jobWipe(cleanup) {
+async function jobWipe(cleanup, region) {
   await ensurePortFree();
   try {
     try {
       fs.unlinkSync(RESULT_JSON);
     } catch {}
-    const rc = await runCli(["--yes", "--region", "keep", "--backup-dir", BACKUP_DIR, "--result-json", RESULT_JSON]);
+    const rc = await runCli(["--yes", "--region", region, "--backup-dir", BACKUP_DIR, "--result-json", RESULT_JSON]);
     const result = readResult();
 
     if (rc !== 0 && rc !== 3) {
@@ -372,13 +381,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (p === "/api/check" && req.method === "POST") {
-    const started = await startJob("check", () => jobCheck());
+    const bodyC = await readBody(req);
+    const started = await startJob("check", () => jobCheck(safeRegion(bodyC.region)));
     return send(res, started ? 202 : 409, "application/json", JSON.stringify({ started }));
   }
 
   if (p === "/api/wipe" && req.method === "POST") {
     const body = await readBody(req);
-    const started = await startJob("wipe", () => jobWipe(!!body.cleanup));
+    const started = await startJob("wipe", () => jobWipe(!!body.cleanup, safeRegion(body.region)));
     return send(res, started ? 202 : 409, "application/json", JSON.stringify({ started }));
   }
 

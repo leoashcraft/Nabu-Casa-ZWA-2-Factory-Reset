@@ -1,8 +1,32 @@
 # zwa2-factory-reset
 
-Factory-reset a **Home Assistant Connect ZWA-2** Z-Wave adapter from the command line — even when the normal factory reset silently fails.
+Factory-reset a **Home Assistant Connect ZWA-2** Z-Wave adapter — even when the normal factory reset silently fails.
 
-Works on macOS and Linux (Windows untested but should work). No Windows PC, no Z-Wave PC Controller, no Home Assistant required.
+There are **two ways to use it**, same engine underneath — pick whichever fits you:
+
+| | Best for | What you do |
+|---|---|---|
+| 🖥️ **Standalone command-line tool** | Any computer (macOS/Linux) with the stick plugged in — no Home Assistant needed | `npm install`, then `node cli.mjs` |
+| 🏠 **Home Assistant add-on** | Home Assistant OS / Supervised users | Add the repo, install, **Open Web UI**, click a button |
+
+No Windows PC, no Z-Wave PC Controller required either way.
+
+## Table of contents
+
+- [The problem this solves](#the-problem-this-solves)
+- [How this tool works around it](#how-this-tool-works-around-it)
+- [Option A — Standalone command-line tool](#option-a--standalone-command-line-tool)
+  - [Install](#install)
+  - [Usage](#usage)
+  - [Options](#options)
+  - [Undo a wipe](#undo-a-wipe)
+- [Option B — Home Assistant add-on](#option-b--home-assistant-add-on)
+- [RF region](#rf-region)
+- [After a successful wipe](#after-a-successful-wipe)
+- [Troubleshooting](#troubleshooting)
+- [Other adapters](#other-adapters)
+- [Safety notes](#safety-notes)
+- [Credits](#credits)
 
 ## The problem this solves
 
@@ -30,7 +54,11 @@ Home Assistant publishes an official [ZWA-2 Toolbox](https://home-assistant.gith
 6. **Reconnect and verify**: new Home ID, empty node list, and not stuck in the bootloader
 7. Offer to restore your previous RF region (a full NVM erase resets it to the firmware default)
 
-## Install
+## Option A — Standalone command-line tool
+
+Run it on any macOS or Linux computer with the ZWA-2 plugged in. **No Home Assistant required** — handy when your HA install is the thing that's misbehaving, or you just want to wipe a stick on a laptop.
+
+### Install
 
 Requires [Node.js](https://nodejs.org) 20 or newer.
 
@@ -40,7 +68,7 @@ cd zwa2-factory-reset
 npm install
 ```
 
-## Usage
+### Usage
 
 Plug in the adapter, then:
 
@@ -76,7 +104,7 @@ node cli.mjs --restore backups/zwa2-nvm-<homeid>-<timestamp>.bin
 
 This restores the complete network — Home ID, paired nodes, security keys — exactly as it was.
 
-## Home Assistant add-on
+## Option B — Home Assistant add-on
 
 If you run **Home Assistant OS or Supervised**, install this as an add-on with a one-click web interface — no configuration:
 

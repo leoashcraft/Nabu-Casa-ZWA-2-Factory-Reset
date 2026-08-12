@@ -60,8 +60,28 @@
   <p class="sub">Wipe your Home Assistant Connect ZWA-2 back to factory settings — even when Home Assistant's own reset doesn't take.</p>
 
   <div class="card">
+    <h2>Your Z-Wave region</h2>
+    <p>Pick the region for your country, or keep whatever the adapter already uses. This is applied when you check or reset below.</p>
+    <select id="region">
+      <option value="keep">Keep the adapter's current region</option>
+      <option value="USA (Long Range)">USA — Long Range (recommended in the US)</option>
+      <option value="USA">USA</option>
+      <option value="Europe (Long Range)">Europe — Long Range</option>
+      <option value="Europe">Europe</option>
+      <option value="Australia/New Zealand">Australia / New Zealand</option>
+      <option value="Hong Kong">Hong Kong</option>
+      <option value="India">India</option>
+      <option value="Israel">Israel</option>
+      <option value="Russia">Russia</option>
+      <option value="China">China</option>
+      <option value="Japan">Japan</option>
+      <option value="Korea">Korea</option>
+    </select>
+  </div>
+
+  <div class="card">
     <h2>1. Check your adapter</h2>
-    <p>See what's on the stick right now. This changes nothing.</p>
+    <p>See what's on the stick right now (and apply the region above if you changed it). This won't erase anything.</p>
     <button id="btnCheck" class="btn-primary">Check adapter</button>
   </div>
 
@@ -88,6 +108,7 @@
   <div class="modal">
     <h3>Factory reset this adapter?</h3>
     <p id="modalText">This permanently erases the Z-Wave network on your ZWA-2. Any paired devices will need to be re-added afterwards. A backup is saved automatically, so this can be undone.</p>
+    <p id="modalRegion" style="font-weight:600;"></p>
     <div class="row">
       <button class="btn-ghost" id="cancel">Cancel</button>
       <button class="btn-danger" id="confirm">Yes, factory reset</button>
@@ -124,17 +145,26 @@
     if (r.status === 409) showStatus("running", "Already working — please wait…");
   }
 
-  $("btnCheck").onclick = () => post("api/check");
+  const region = () => $("region").value;
+  const regionLabel = () => $("region").selectedOptions[0].textContent;
+
+  $("btnCheck").onclick = () => post("api/check", { region: region() });
   $("btnRestore").onclick = () => {
     const file = $("backups").value;
     if (!file) { showStatus("error", "Pick a backup to restore first."); return; }
     post("api/restore", { file });
   };
 
-  // Wipe goes through a confirm modal
-  $("btnWipe").onclick = () => $("modal").classList.add("show");
+  // Wipe goes through a confirm modal (which reflects the chosen region)
+  $("btnWipe").onclick = () => {
+    const r = region();
+    $("modalRegion").textContent = r === "keep"
+      ? "The adapter's current region will be kept."
+      : `The region will be set to: ${regionLabel()}.`;
+    $("modal").classList.add("show");
+  };
   $("cancel").onclick = () => $("modal").classList.remove("show");
-  $("confirm").onclick = () => { $("modal").classList.remove("show"); post("api/wipe", { cleanup: $("cleanup").checked }); };
+  $("confirm").onclick = () => { $("modal").classList.remove("show"); post("api/wipe", { cleanup: $("cleanup").checked, region: region() }); };
 
   async function loadBackups() {
     try {
