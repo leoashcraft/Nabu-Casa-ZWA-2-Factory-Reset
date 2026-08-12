@@ -140,13 +140,22 @@
     try {
       const list = await (await fetch("api/backups")).json();
       const sel = $("backups");
-      if (!list.length) { sel.innerHTML = '<option value="">No backups yet</option>'; return; }
-      sel.innerHTML = list.map((b) => {
+      sel.textContent = "";
+      if (!list.length) {
+        const o = document.createElement("option");
+        o.value = ""; o.textContent = "No backups yet";
+        sel.appendChild(o);
+        return;
+      }
+      for (const b of list) {
         const when = b.createdAt ? new Date(b.createdAt).toLocaleString() : b.name;
         const dev = b.devices == null ? "" : `${b.devices} device(s)`;
         const empty = b.devices === 0 ? " ⚠ empty network" : "";
-        return `<option value="${b.file}">${when} — network ${b.homeId||"?"}, ${dev}${empty}</option>`;
-      }).join("");
+        const o = document.createElement("option");
+        o.value = b.file;                              // set as property — never parsed as HTML
+        o.textContent = `${when} — network ${b.homeId || "?"}, ${dev}${empty}`;
+        sel.appendChild(o);
+      }
     } catch {}
   }
   loadBackups();

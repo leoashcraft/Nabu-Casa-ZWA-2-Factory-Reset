@@ -229,11 +229,24 @@ async function jobWipe(cleanup) {
   }
 }
 
+/** Only allow restoring a *.bin file that actually lives in BACKUP_DIR. */
+function validateBackupPath(file) {
+  if (typeof file !== "string" || !file) return null;
+  const resolved = path.resolve(file);
+  const root = path.resolve(BACKUP_DIR) + path.sep;
+  if (!resolved.startsWith(root)) return null;
+  if (!resolved.endsWith(".bin")) return null;
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return null;
+  return resolved;
+}
+
 async function jobRestore(file) {
-  if (!file) {
-    setStatus("error", "No backup selected.");
+  const safe = validateBackupPath(file);
+  if (!safe) {
+    setStatus("error", "Invalid or unknown backup file — pick one from the list.");
     return;
   }
+  file = safe;
   await ensurePortFree();
   try {
     const rc = await runCli(["--restore", file, "--yes", "--backup-dir", BACKUP_DIR]);
