@@ -27,6 +27,33 @@ const KNOWN_ADAPTERS = [
 
 const CONNECT_TIMEOUT_MS = 60_000;
 const REVERIFY_DELAY_MS = 2_000;
+const WATCHDOG_MS = 15 * 60_000;
+
+// Watchdog: whatever happens, never hang forever (important when running
+// unattended, e.g. as a Home Assistant add-on where nobody can press Ctrl+C).
+const watchdog = setTimeout(() => {
+  console.error(
+    `\nWatchdog: operation exceeded ${WATCHDOG_MS / 60_000} minutes — aborting. ` +
+      "The adapter may be unresponsive; unplug/replug it and re-run.",
+  );
+  process.exit(3);
+}, WATCHDOG_MS);
+watchdog.unref();
+
+/** Progress printer that behaves in real terminals AND in captured logs. */
+function makeProgressPrinter(label) {
+  let lastPct = -1;
+  const isTTY = process.stdout.isTTY;
+  const step = isTTY ? 10 : 20;
+  return (done, total) => {
+    const pct = Math.floor((done / total) * 100);
+    if (pct !== lastPct && pct % step === 0) {
+      if (isTTY) process.stdout.write(`  ${label}: ${pct}%   \r`);
+      else console.log(`  ${label}: ${pct}%`);
+      lastPct = pct;
+    }
+  };
+}
 
 // --------------------------------------------------------------- arg parsing
 
@@ -189,6 +216,23 @@ function normalizePortPath(p) {
   return p;
 }
 
+/**
+ * Linux fallback: inside containers (e.g. a Home Assistant add-on) serialport
+ * often can't read USB VID/PID metadata, but the kernel's stable
+ * /dev/serial/by-id symlinks encode the product name.
+ */
+function findByIdCandidates() {
+  const dir = "/dev/serial/by-id";
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => /nabu[_-]?casa|zwa[_-]?2/i.test(f))
+      .map((f) => path.join(dir, f));
+  } catch {
+    return [];
+  }
+}
+
 async function resolvePort() {
   if (flags.port) return flags.port;
 
@@ -224,7 +268,30 @@ async function resolvePort() {
     return normalizePortPath(known[idx].path);
   }
 
-  // No known adapter — offer everything that looks like a serial port
+  // No USB-ID match — try the /dev/serial/by-id name-based fallback (Linux,
+  // and the reliable path inside Home Assistant add-on containers)
+  const byId = findByIdCandidates();
+  if (byId.length === 1) {
+    console.log(`Auto-detected via /dev/serial/by-id: ${byId[0]}`);
+    return byId[0];
+  }
+  if (byId.length > 1) {
+    console.log("Multiple ZWA-2-looking devices in /dev/serial/by-id:");
+    byId.forEach((p, i) => console.log(`  [${i + 1}] ${p}`));
+    if (flags.yes) {
+      console.error("Multiple adapters found — use --port to choose in non-interactive mode.");
+      process.exit(2);
+    }
+    const answer = await rl.question("Select adapter number: ");
+    const idx = Number(answer) - 1;
+    if (!(idx >= 0 && idx < byId.length)) {
+      console.error("Invalid selection.");
+      process.exit(2);
+    }
+    return byId[idx];
+  }
+
+  // Still nothing — offer everything that looks like a serial port
   const candidates = ports.filter((p) => p.vendorId || /usb|acm/i.test(p.path));
   if (candidates.length === 0) {
     console.error("No serial ports found. Is the adapter plugged in?");
@@ -341,14 +408,7 @@ Adapter state:
     backupFile = path.join(flags.backupDir, `zwa2-nvm-${before.homeId}-${ts()}.bin`);
     console.log(`Backing up NVM to ${backupFile} ...`);
     try {
-      let lastPct = -1;
-      const nvm = await ctrl.backupNVMRaw((read, total) => {
-        const pct = Math.floor((read / total) * 100);
-        if (pct !== lastPct && pct % 10 === 0) {
-          process.stdout.write(`  ${pct}%\r`);
-          lastPct = pct;
-        }
-      });
+      const nvm = await ctrl.backupNVMRaw(makeProgressPrinter("backup"));
       fs.writeFileSync(backupFile, nvm);
       console.log(`  Backup complete (${nvm.length} bytes).`);
     } catch (e) {
@@ -518,18 +578,8 @@ async function restoreFlow() {
   }
 
   console.log("Restoring NVM (this can take a minute)...");
-  const makeProgress = (label) => {
-    let lastPct = -1;
-    return (done, total) => {
-      const pct = Math.floor((done / total) * 100);
-      if (pct !== lastPct && pct % 10 === 0) {
-        process.stdout.write(`  ${label}: ${pct}%   \r`);
-        lastPct = pct;
-      }
-    };
-  };
   try {
-    await ctrl.restoreNVM(nvmData, makeProgress("converting"), makeProgress("writing"));
+    await ctrl.restoreNVM(nvmData, makeProgressPrinter("converting"), makeProgressPrinter("writing"));
     console.log("\n  Restore command completed.");
   } catch (e) {
     // On some platforms (notably macOS) the adapter's post-restore soft reset
