@@ -16,10 +16,6 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-
-const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 // ---------------------------------------------------------------- constants
 
@@ -83,16 +79,6 @@ const flags = {
   info: args.includes("--info"),
   resultJson: getFlagValue("--result-json"),
   help: args.includes("--help") || args.includes("-h"),
-  // Internal: post-wipe verification runs in a fresh child process so the
-  // erase phase's serial file descriptor is fully gone (the kernel holds an
-  // advisory lock on the port until the owning process exits — reconnecting
-  // in-process after the bootloader re-enumerates USB hits "Cannot lock port").
-  verifyWipe: args.includes("--verify-wipe"),
-  wipeErase: args.includes("--wipe-erase"),
-  handoff: getFlagValue("--handoff"),
-  expectOldHomeId: getFlagValue("--expect-old-home-id"),
-  oldRegion: getFlagValue("--old-region"),
-  backupFile: getFlagValue("--backup-file"),
 };
 
 function getFlagValue(name) {
@@ -424,9 +410,12 @@ async function eraseNVMViaBootloader(driver) {
   console.log("Bootloader reports: NVM erased.");
 
   console.log("Restarting the Z-Wave application...");
-  await driver.leaveBootloader().catch(() => {
-    // Some platforms lose the serial connection briefly here; the fresh
-    // verification connection below is what actually matters.
+  // leaveBootloader() re-initializes the controller on the SAME serial handle
+  // (it does not reopen the port), so afterwards driver.controller carries the
+  // new post-wipe Home ID — no reconnect needed. Tolerate errors: the caller
+  // re-reads controller state with retries and degrades gracefully if needed.
+  await driver.leaveBootloader().catch((e) => {
+    console.log(`  (note: application restart reported: ${e.message})`);
   });
 }
 
@@ -441,72 +430,23 @@ async function eraseNVMViaBootloader(driver) {
  * itself never opens the serial port, so it never holds the lock.
  */
 async function wipeFlow() {
-  const portPath = await resolvePort();
-
-  // Confirmation gate (children run with --yes)
-  if (!flags.yes) {
-    console.log("This will PERMANENTLY erase the Z-Wave network on this adapter.");
-    console.log("Every paired device will need to be excluded/reset and re-paired afterwards.");
-    console.log("A backup is taken first, so this can be undone.");
-    const a = await rl.question('Type "WIPE" to continue: ');
-    if (a.trim() !== "WIPE") {
-      console.log("Aborted. Nothing was changed.");
-      process.exit(0);
-    }
-  }
-
-  const handoffFile = path.join(os.tmpdir(), `zwa2-handoff-${process.pid}.json`);
-
-  // ---- Phase 1: erase (separate process, exits when done → releases the port)
-  const eraseArgs = [
-    SCRIPT_PATH, "--wipe-erase", "--yes",
-    "--port", portPath,
-    "--backup-dir", flags.backupDir,
-    "--handoff", handoffFile,
-  ];
-  if (flags.noBackup) eraseArgs.push("--no-backup");
-  const erase = spawnSync(process.execPath, eraseArgs, { stdio: "inherit" });
-  if (erase.status !== 0) process.exit(erase.status ?? 1);
-
-  let handoff = {};
-  try {
-    handoff = JSON.parse(fs.readFileSync(handoffFile, "utf8"));
-    fs.unlinkSync(handoffFile);
-  } catch {
-    // No handoff — treat old state as unknown; verify still checks the result.
-  }
-
-  // ---- Phase 2: verify (fresh process, opens the re-enumerated port)
-  const verifyArgs = [
-    SCRIPT_PATH, "--verify-wipe", "--yes",
-    "--port", portPath,
-    "--region", flags.region ?? "keep",
-  ];
-  if (handoff.oldHomeId) verifyArgs.push("--expect-old-home-id", handoff.oldHomeId);
-  if (handoff.oldRegion !== undefined && handoff.oldRegion !== null) {
-    verifyArgs.push("--old-region", String(handoff.oldRegion));
-  }
-  if (handoff.backupFile) verifyArgs.push("--backup-file", handoff.backupFile);
-  if (flags.resultJson) verifyArgs.push("--result-json", flags.resultJson);
-
-  const verify = spawnSync(process.execPath, verifyArgs, { stdio: "inherit" });
-  // Exit codes: 0 = fully verified, 3 = erased but couldn't reopen to
-  // verify/restore-region (still a successful wipe), other = real failure.
-  process.exit(verify.status ?? 1);
-}
-
-/** Phase 1 process: connect, back up, erase via bootloader, then EXIT. */
-async function wipeEraseFlow() {
   const portPath = flags.port || (await resolvePort());
   console.log(`\nConnecting to ${portPath} ...`);
   let { driver, mode } = await connect(portPath);
 
-  let before = { homeId: undefined, region: undefined };
+  let before = { homeId: undefined, nodes: [], region: undefined };
   let backupFile;
 
   if (mode === "bootloader") {
-    console.log("⚠ Adapter is in bootloader mode (likely from a previous attempt) — erasing from here.");
-    console.log("(Cannot back up NVM in bootloader mode; proceeding with erase.)");
+    console.log("⚠ Adapter is in bootloader mode (likely from a previous attempt) — will erase from here.");
+    console.log("(Cannot back up NVM in bootloader mode.)");
+    if (!flags.yes) {
+      const a = await rl.question("Erase NVM and restart the adapter? [Y/n] ");
+      if (a.trim().toLowerCase() === "n") {
+        await safeDestroy(driver);
+        process.exit(0);
+      }
+    }
   } else {
     const ctrl = driver.controller;
     before = {
@@ -558,103 +498,83 @@ Adapter state:
         process.exit(1);
       }
     }
-  }
 
-  // Write the handoff BEFORE the erase, so the verify phase knows the old state
-  // even if this process is killed right after leaveBootloader.
-  if (flags.handoff) {
-    try {
-      fs.writeFileSync(
-        flags.handoff,
-        JSON.stringify({
-          portPath,
-          oldHomeId: before.homeId ?? null,
-          oldRegion: before.region ?? null,
-          backupFile: backupFile ?? null,
-        }),
-      );
-    } catch (e) {
-      console.error(`(could not write handoff file: ${e.message})`);
+    if (!flags.yes) {
+      console.log("\nThis will PERMANENTLY erase the Z-Wave network on this adapter.");
+      console.log("Every paired device will need to be excluded/reset and re-paired afterwards.");
+      const a = await rl.question('Type "WIPE" to continue: ');
+      if (a.trim() !== "WIPE") {
+        console.log("Aborted. Nothing was changed.");
+        await safeDestroy(driver);
+        process.exit(0);
+      }
     }
   }
 
+  // Erase via the bootloader, then leaveBootloader() — all on the SAME open
+  // serial connection. We deliberately NEVER release the port: on some hosts
+  // (notably Home Assistant OS) another process reclaims a freed Z-Wave port
+  // within seconds of the adapter re-enumerating, which blocks any reopen.
+  // Holding the one connection continuously is what lets us verify and restore
+  // the RF region afterwards. zwave-js's leaveBootloader() re-initializes the
+  // controller on the existing handle, so the new Home ID is available without
+  // reopening.
   await eraseNVMViaBootloader(driver);
-  await safeDestroy(driver);
-  console.log("Erase phase complete; releasing the port for verification.");
-  // Exit promptly so the OS closes our serial fd and the re-enumerated device
-  // is free for the verify process to open.
-  process.exit(0);
-}
 
-async function verifyWipeChildFlow() {
-  const portPath = flags.port || (await resolvePort());
-  const before = {
-    homeId: flags.expectOldHomeId,
-    region: flags.oldRegion !== undefined ? Number(flags.oldRegion) : undefined,
-  };
-  const backupFile = flags.backupFile;
+  // Let the application finish coming back up on the same connection.
+  await new Promise((r) => setTimeout(r, 3_000));
 
-  await new Promise((r) => setTimeout(r, REVERIFY_DELAY_MS));
-
-  let driver, mode;
-  try {
-    ({ driver, mode } = await connectWithRetry(portPath));
-  } catch (e) {
-    // The erase already succeeded (phase 1 confirmed "NVM erased" from the
-    // bootloader, and the orchestrator only runs us on phase-1 success). We
-    // just couldn't reopen the port to double-check / restore the region —
-    // typically because the host reclaimed the re-enumerated device. This is
-    // NOT a wipe failure; report it as a partial success (exit 3).
-    console.log(`
-⚠ The wipe completed (the bootloader confirmed the NVM was erased), but this
-  tool could not reopen the adapter afterwards to double-check it or restore
-  the RF region. Something on the system reclaimed the port after the adapter
-  restarted (last error: ${e.message}).
-
-  Your adapter IS wiped. Two follow-ups:
-   • If you are not in the EU, set your RF region: use the Configure tool at
-     https://home-assistant.github.io/zwa2-toolbox/ (Chrome/Edge), or your
-     Z-Wave software's region setting.
-   • To confirm the wipe, run this tool's read-only check — it should show a
-     new Home ID with no paired devices.${backupFile ? `
-   • Backup (to undo): ${restoreHint(backupFile)}` : ""}`);
-    process.exit(3);
-  }
-
-  if (mode === "bootloader") {
-    // One rescue attempt, then bail with instructions
-    console.log("Adapter came back in bootloader mode — attempting to start the application...");
-    await driver.leaveBootloader().catch(() => {});
-    await safeDestroy(driver);
-    await new Promise((r) => setTimeout(r, REVERIFY_DELAY_MS));
-    ({ driver, mode } = await connectWithRetry(portPath));
-    if (mode === "bootloader") {
-      await safeDestroy(driver);
-      console.error(`
-✗ The adapter is stuck in bootloader mode.
-  1. Unplug it, wait 5 seconds, and plug it back in, then re-run this tool.
-  2. If it is still stuck, use the official recovery tool in Chrome/Edge:
-     https://home-assistant.github.io/zwa2-toolbox/  →  "Recover adapter"${backupFile ? `
-  3. Your NVM backup is safe at: ${backupFile}
-     You can restore it later with:  ${restoreHint(backupFile)}` : ""}`);
-      process.exit(1);
+  let after = { homeId: undefined, nodes: [], region: undefined };
+  for (let i = 0; i < 12; i++) {
+    if (driver.mode === DriverMode.SerialAPI && driver.controller?.homeId !== undefined) {
+      const ctrl = driver.controller;
+      after = {
+        homeId: ctrl.homeId?.toString(16),
+        nodes: [...ctrl.nodes.keys()],
+        region: await ctrl.getRFRegion().catch(() => undefined),
+      };
+      break;
     }
+    await new Promise((r) => setTimeout(r, 2_000));
   }
 
-  const ctrl = driver.controller;
-  const after = {
-    homeId: ctrl.homeId?.toString(16),
-    nodes: [...ctrl.nodes.keys()],
-    region: await ctrl.getRFRegion().catch(() => undefined),
-  };
+  const homeIdChanged = before.homeId === undefined || (after.homeId && after.homeId !== before.homeId);
+  const nodesCleared = after.homeId !== undefined && after.nodes.length <= 1;
 
-  const homeIdChanged = before.homeId === undefined || after.homeId !== before.homeId;
-  const nodesCleared = after.nodes.length === 1;
-
-  if (homeIdChanged && nodesCleared) {
+  if (after.homeId && homeIdChanged && nodesCleared) {
     console.log(`✓ Factory reset verified:
   New Home ID:  ${after.homeId}${before.homeId ? `  (was ${before.homeId})` : ""}
   Node list:    only the controller itself remains`);
+  } else if (!after.homeId) {
+    // The bootloader already confirmed the erase, so the wipe DID happen; we
+    // just couldn't read the application state back for an automatic check.
+    console.log(`
+⚠ The wipe completed (the bootloader confirmed the NVM was erased), but the
+  adapter did not report its application state in time for an automatic
+  double-check. Your adapter IS wiped.
+   • Run the read-only check to confirm a new Home ID with no paired devices.
+   • RF region may have reset to the firmware default (EU); set it via
+     https://home-assistant.github.io/zwa2-toolbox/ if needed.${backupFile ? `
+   • Backup (to undo): ${restoreHint(backupFile)}` : ""}`);
+    if (flags.resultJson) {
+      try {
+        fs.writeFileSync(
+          flags.resultJson,
+          JSON.stringify({
+            verified: false,
+            erased: true,
+            oldHomeId: before.homeId ?? null,
+            oldHomeIdDecimal: before.homeId ? parseInt(before.homeId, 16) : null,
+            newHomeId: null,
+            backupFile: backupFile ?? null,
+          }),
+        );
+      } catch {
+        /* best effort */
+      }
+    }
+    await safeDestroy(driver);
+    process.exit(3);
   } else {
     console.error(`✗ Verification FAILED:
   Home ID:  ${after.homeId} ${homeIdChanged ? "(changed ✓)" : "(UNCHANGED ✗)"}
@@ -664,7 +584,6 @@ async function verifyWipeChildFlow() {
     process.exit(1);
   }
 
-  // Machine-readable summary for wrappers (e.g. the HA add-on)
   if (flags.resultJson) {
     try {
       fs.writeFileSync(
@@ -682,8 +601,7 @@ async function verifyWipeChildFlow() {
     }
   }
 
-  // ---- RF region handling
-  await handleRegion(ctrl, before.region, after.region);
+  await handleRegion(driver.controller, before.region, after.region);
 
   await safeDestroy(driver);
 
@@ -881,9 +799,7 @@ process.on("unhandledRejection", (e) => {
 });
 
 try {
-  if (flags.verifyWipe) await verifyWipeChildFlow();
-  else if (flags.wipeErase) await wipeEraseFlow();
-  else if (flags.list) await listFlow();
+  if (flags.list) await listFlow();
   else if (flags.info) await infoFlow();
   else if (flags.restore) await restoreFlow();
   else await wipeFlow();
