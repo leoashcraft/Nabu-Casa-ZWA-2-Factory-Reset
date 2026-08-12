@@ -61,7 +61,7 @@ You'll see the adapter's current state, an NVM backup will be written to `./back
 | `--restore <file>` | Restore a previous NVM backup instead of wiping |
 | `--region keep` | After the wipe, restore the RF region the stick had before |
 | `--region default` | Leave the RF region at the firmware default |
-| `--region <name\|number>` | Set a specific region (e.g. `Europe`, `USA`, `9`) |
+| `--region <name\|number>` | Set a specific region (e.g. `Europe`, `USA`, `9`). Applies on wipe and on `--info` (check). |
 | `--backup-dir <dir>` | Where to write backups (default `./backups`) |
 | `--no-backup` | Skip the backup (not recommended) |
 | `--yes` / `-y` | Non-interactive; skips confirmations |

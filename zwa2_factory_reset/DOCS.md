@@ -18,10 +18,10 @@ Factory-resets a Home Assistant Connect ZWA-2 when the normal factory reset sile
 
 ## Doing a factory reset
 
-1. In this add-on's **Configuration** tab: set `action: wipe` and `confirm: true`. If you'd like the Z-Wave JS add-on handled for you, also set `manage_zwave_js: true` — otherwise stop it yourself first (Settings → Add-ons → Z-Wave JS → Stop).
-2. **Start** the add-on and watch the **Log** tab. A successful run ends with `✓ Factory reset verified` and a new Home ID.
-3. The log shows exactly where your backup was saved and how to restore it.
-4. `confirm` is automatically set back to `false` for you.
+1. In this add-on's **Configuration** tab: set `action: wipe` and `confirm: true`. Leave `manage_zwave_js: true` so the add-on frees the port for you (otherwise stop the Z-Wave JS add-on yourself first).
+2. **Start** the add-on and watch the **Log** tab. You'll see: backup → `Bootloader reports: NVM erased` → the adapter restarts with a **new Home ID**.
+3. **Finish with a check (Home Assistant OS).** When the adapter restarts, its USB re-enumerates and the host briefly grabs the port, so the wipe often can't verify itself or restore the RF region in the same run. If the log ends with *"TO FINISH: set action to check…"*, set `action: check` (leave `region: keep`), Save, and Start again. The check runs on a settled connection and both confirms the new Home ID with no devices **and restores your RF region from the backup**. On desktops and some systems the wipe does this automatically in one run — the check step is only needed when the log asks for it.
+4. `confirm` resets itself to `false` after the wipe. Your backup path is printed in the log (kept in `/share/zwa2-factory-reset/backups/`).
 
 ## Undoing things (walking back)
 

@@ -735,9 +735,28 @@ async function restoreFlow() {
   process.exit(0);
 }
 
+/** Read the RF region recorded in the newest backup sidecar in a directory. */
+function regionFromNewestBackup(dir) {
+  try {
+    const sidecars = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".bin.json"))
+      .map((f) => path.join(dir, f))
+      .map((p) => ({ p, mtime: fs.statSync(p).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const { p } of sidecars) {
+      const meta = JSON.parse(fs.readFileSync(p, "utf8"));
+      if (typeof meta.region === "number") return { region: meta.region, file: p, homeId: meta.homeId };
+    }
+  } catch {
+    /* no backups / unreadable */
+  }
+  return undefined;
+}
+
 async function infoFlow() {
-  const portPath = await resolvePort();
-  console.log(`\nConnecting to ${portPath} (read-only check)...`);
+  const portPath = flags.port || (await resolvePort());
+  console.log(`\nConnecting to ${portPath} ...`);
   const { driver, mode } = await connect(portPath);
   if (mode === "bootloader") {
     console.log("Adapter is in BOOTLOADER mode (no Z-Wave application running).");
@@ -748,12 +767,45 @@ async function infoFlow() {
   const c = driver.controller;
   const region = await c.getRFRegion().catch(() => undefined);
   const nodes = [...c.nodes.keys()];
+  const devices = Math.max(0, nodes.length - 1);
   console.log(`
-Adapter state (nothing was changed):
+Adapter state:
   Home ID:    ${c.homeId?.toString(16)}
-  Nodes:      ${nodes.join(", ")} (${Math.max(0, nodes.length - 1)} paired device(s) besides the controller)
+  Nodes:      ${nodes.join(", ")} (${devices} paired device(s) besides the controller)
   Firmware:   ${c.firmwareVersion} (SDK ${c.sdkVersion})
   RF region:  ${regionName(region)}`);
+
+  // Decide whether to restore the RF region. This runs on a settled connection
+  // (unlike right after a wipe, when the re-enumerated port is briefly grabbed
+  // by the host), so it's the reliable place to fix a region that a wipe reset.
+  let target;
+  let source = "";
+  if (flags.region === undefined || flags.region === "keep") {
+    const fromBackup = regionFromNewestBackup(flags.backupDir);
+    if (fromBackup) {
+      target = fromBackup.region;
+      source = ` (from your most recent backup${fromBackup.homeId ? ` of network ${fromBackup.homeId}` : ""})`;
+    }
+  } else if (flags.region === "default") {
+    target = undefined;
+  } else {
+    target = parseRegionArg(flags.region);
+    if (target === undefined) console.error(`Unknown region "${flags.region}" — leaving it unchanged.`);
+  }
+
+  if (target !== undefined && target !== region) {
+    console.log(`\nRestoring RF region to ${regionName(target)}${source}...`);
+    try {
+      await c.setRFRegion(target);
+      console.log(`✓ RF region set to ${regionName(await c.getRFRegion().catch(() => target))}.`);
+    } catch (e) {
+      console.error(`Failed to set RF region: ${e.message}`);
+      console.error("You can set it from Chrome/Edge at https://home-assistant.github.io/zwa2-toolbox/ → Configure.");
+    }
+  } else if (target !== undefined) {
+    console.log("\nRF region already matches the desired value; nothing to change.");
+  }
+
   await safeDestroy(driver);
   process.exit(0);
 }

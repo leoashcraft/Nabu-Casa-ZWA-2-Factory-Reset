@@ -152,12 +152,18 @@ case "${ACTION}" in
         ;;
     check)
         ensure_port_free
-        node /app/cli.mjs --info "${ARGS[@]}"
+        # check reports adapter state AND, on this settled connection, restores
+        # the RF region a wipe may have reset (region=keep pulls it from the
+        # newest backup). This is the reliable place to do it — right after a
+        # wipe the re-enumerated port is briefly grabbed by the host.
+        node /app/cli.mjs --info "${ARGS[@]}" --region "${REGION}"
         RC=$?
         restart_stopped
         if [ ${RC} -eq 0 ]; then
             bashio::log.info "======================================================================"
-            bashio::log.info "This was a safe, read-only check — nothing was changed."
+            bashio::log.info "Check complete. If you just did a wipe, this also restored your RF"
+            bashio::log.info "region (if a backup recorded it) — you're done."
+            bashio::log.info ""
             bashio::log.info "To FACTORY RESET this adapter:"
             bashio::log.info "  1. Open the Configuration tab above."
             bashio::log.info "  2. Set 'action' to 'wipe' and turn 'confirm' ON."
@@ -212,7 +218,11 @@ case "${ACTION}" in
             bashio::log.info "Set 'cleanup_ha_devices: true' to have ONLY that network's integration entry removed automatically,"
             bashio::log.info "or remove it yourself: Settings → Devices & Services → Z-Wave."
         elif [ ${RC} -eq 3 ]; then
-            bashio::log.warning "Wipe completed, but the adapter could not be reopened to verify/restore region (see above)."
+            bashio::log.warning "Wipe completed and confirmed. The adapter re-enumerated on restart and the"
+            bashio::log.warning "host briefly reclaimed the port, so region restore was skipped."
+            bashio::log.warning "TO FINISH: set 'action' to 'check' (leave region: keep), Save, and Start"
+            bashio::log.warning "the add-on again. That verifies the new network AND restores your RF region"
+            bashio::log.warning "from the backup on a settled connection."
         fi
         restart_stopped
         # confirm auto-resets after a successful (0) or partial-success (3) wipe
