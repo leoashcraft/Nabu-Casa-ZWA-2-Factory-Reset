@@ -19,7 +19,7 @@ map:
 options:
   action: check
   confirm: false
-  manage_zwave_js: false
+  manage_zwave_js: true
   cleanup_ha_devices: false
   port: auto
   region: keep

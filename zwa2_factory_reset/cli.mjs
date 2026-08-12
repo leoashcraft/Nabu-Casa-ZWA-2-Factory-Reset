@@ -244,10 +244,33 @@ function findByIdCandidates() {
   }
 }
 
+/** serialport's enumeration shells out to `udevadm`, which is absent in minimal
+ * containers (e.g. the HA add-on base image) and throws. Never let that crash us. */
+async function listPortsSafe() {
+  try {
+    return await SerialPort.list();
+  } catch {
+    return [];
+  }
+}
+
+/** Raw device-node scan that needs no udevadm: by-id symlinks + tty globs. */
+function scanDevCandidates() {
+  const out = [...findByIdCandidates()];
+  try {
+    for (const f of fs.readdirSync("/dev")) {
+      if (/^tty(USB|ACM)\d+$/.test(f)) out.push("/dev/" + f);
+    }
+  } catch {
+    // /dev not enumerable — nothing to add
+  }
+  return [...new Set(out)];
+}
+
 async function resolvePort() {
   if (flags.port) return flags.port;
 
-  const ports = await SerialPort.list();
+  const ports = await listPortsSafe();
   const known = ports.filter((p) =>
     KNOWN_ADAPTERS.some(
       (k) => p.vendorId?.toLowerCase() === k.vendorId && p.productId?.toLowerCase() === k.productId,
@@ -302,29 +325,38 @@ async function resolvePort() {
     return byId[idx];
   }
 
-  // Still nothing — offer everything that looks like a serial port
-  const candidates = ports.filter((p) => p.vendorId || /usb|acm/i.test(p.path));
-  if (candidates.length === 0) {
+  // Still nothing from serialport metadata — fall back to raw device nodes.
+  // This is the path that works inside containers where port enumeration is
+  // unavailable (no udevadm), e.g. the Home Assistant add-on.
+  let candidatePaths;
+  if (ports.length > 0) {
+    candidatePaths = ports.filter((p) => p.vendorId || /usb|acm/i.test(p.path)).map((p) => p.path);
+  } else {
+    candidatePaths = scanDevCandidates();
+  }
+  candidatePaths = [...new Set(candidatePaths)];
+
+  if (candidatePaths.length === 0) {
     console.error("No serial ports found. Is the adapter plugged in?");
     process.exit(2);
   }
+  if (candidatePaths.length === 1) {
+    console.log(`Using the only serial device present: ${candidatePaths[0]}`);
+    return normalizePortPath(candidatePaths[0]);
+  }
   console.log("No ZWA-2 auto-detected. Available serial ports:");
-  candidates.forEach((p, i) =>
-    console.log(
-      `  [${i + 1}] ${p.path}  ${p.manufacturer ?? ""} ${p.vendorId ? `(${p.vendorId}:${p.productId})` : ""}`,
-    ),
-  );
+  candidatePaths.forEach((p, i) => console.log(`  [${i + 1}] ${p}`));
   if (flags.yes) {
-    console.error("Cannot pick a port non-interactively — use --port.");
+    console.error("Cannot pick a port non-interactively — set the 'port' option explicitly.");
     process.exit(2);
   }
   const answer = await rl.question("Select port number: ");
   const idx = Number(answer) - 1;
-  if (!(idx >= 0 && idx < candidates.length)) {
+  if (!(idx >= 0 && idx < candidatePaths.length)) {
     console.error("Invalid selection.");
     process.exit(2);
   }
-  return normalizePortPath(candidates[idx].path);
+  return normalizePortPath(candidatePaths[idx]);
 }
 
 // -------------------------------------------------------------- erase logic
@@ -694,10 +726,8 @@ Adapter state (nothing was changed):
 }
 
 async function listFlow() {
-  const ports = await SerialPort.list();
-  if (ports.length === 0) {
-    console.log("No serial ports found.");
-  } else {
+  const ports = await listPortsSafe();
+  if (ports.length > 0) {
     for (const p of ports) {
       const known = KNOWN_ADAPTERS.find(
         (k) => p.vendorId?.toLowerCase() === k.vendorId && p.productId?.toLowerCase() === k.productId,
@@ -705,6 +735,16 @@ async function listFlow() {
       console.log(
         `${p.path}  ${p.manufacturer ?? ""} ${p.vendorId ? `(${p.vendorId}:${p.productId})` : ""}${known ? `  ← ${known.label}` : ""}`,
       );
+    }
+  } else {
+    // Container / no-udevadm environment: report raw device nodes instead
+    const byId = findByIdCandidates();
+    const dev = scanDevCandidates();
+    if (dev.length === 0) {
+      console.log("No serial ports found.");
+    } else {
+      console.log("Serial devices (port metadata unavailable in this environment):");
+      dev.forEach((p) => console.log(`  ${p}${byId.includes(p) ? "  ← looks like a ZWA-2" : ""}`));
     }
   }
   process.exit(0);

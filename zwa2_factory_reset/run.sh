@@ -21,17 +21,23 @@ if [ -n "${PORT}" ] && [ "${PORT}" != "auto" ]; then
     ARGS+=(--port "${PORT}")
 fi
 
-# Z-Wave JS add-ons that could be holding the serial port
+# Z-Wave JS add-ons that could be holding the serial port. We only probe the
+# ones actually installed (avoids noisy 404s in the log for the rest).
 ZWJS_SLUGS="core_zwave_js a0d7b954_zwavejsui a0d7b954_zwavejs2mqtt"
 STOPPED_SLUGS=""
+INSTALLED_ADDONS=""
 
-zwjs_state() {
-    bashio::api.supervisor "GET" "/addons/${1}/info" "" ".state" 2>/dev/null || echo "not_installed"
+load_installed_addons() {
+    # One call: the slugs of every installed add-on
+    INSTALLED_ADDONS=$(bashio::api.supervisor "GET" "/addons" false ".addons[].slug" 2>/dev/null || echo "")
 }
 
 ensure_port_free() {
+    load_installed_addons
     for slug in ${ZWJS_SLUGS}; do
-        state=$(zwjs_state "${slug}")
+        # Skip slugs that aren't installed — probing them would 404
+        echo "${INSTALLED_ADDONS}" | grep -qx "${slug}" || continue
+        state=$(bashio::api.supervisor "GET" "/addons/${slug}/info" false ".state" 2>/dev/null || echo "unknown")
         if [ "${state}" = "started" ]; then
             if [ "${MANAGE_ZWJS}" = "true" ]; then
                 bashio::log.info "Stopping ${slug} to free the serial port (will restart it afterwards)..."
@@ -149,6 +155,18 @@ case "${ACTION}" in
         node /app/cli.mjs --info "${ARGS[@]}"
         RC=$?
         restart_stopped
+        if [ ${RC} -eq 0 ]; then
+            bashio::log.info "======================================================================"
+            bashio::log.info "This was a safe, read-only check — nothing was changed."
+            bashio::log.info "To FACTORY RESET this adapter:"
+            bashio::log.info "  1. Open the Configuration tab above."
+            bashio::log.info "  2. Set 'action' to 'wipe' and turn 'confirm' ON."
+            bashio::log.info "  3. (Optional) turn 'cleanup_ha_devices' ON to also remove the old"
+            bashio::log.info "     devices from Home Assistant."
+            bashio::log.info "  4. Save, then Start this add-on again and watch this log."
+            bashio::log.info "A backup is always saved first, so a wipe can be undone."
+            bashio::log.info "======================================================================"
+        fi
         exit ${RC}
         ;;
     restore)
