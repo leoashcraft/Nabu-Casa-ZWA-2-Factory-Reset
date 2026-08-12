@@ -160,7 +160,8 @@ async function cleanupHaDevices(oldHomeIdDecimal, oldHomeIdHex) {
 function runCli(args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(DIR, "cli.mjs"), ...args], {
-      env: { ...process.env },
+      // Phrase the CLI's "undo" hint for this web UI instead of a node command.
+      env: { ...process.env, ZWA2_RESTORE_HINT: 'use the "Restore a backup" section below' },
     });
     const onData = (buf) => {
       for (const line of buf.toString().split(/\r?\n/)) {
@@ -223,20 +224,24 @@ async function jobWipe(cleanup) {
       return;
     }
 
-    if (rc === 3) {
-      // Wipe erased the NVM, but the port was reclaimed before we could verify /
-      // restore region in the same run. Do it now on a settled connection.
-      log("");
-      log("Finishing on a settled connection (verifying and restoring RF region)...");
-      await runCli(["--info", "--yes", "--region", "keep", "--backup-dir", BACKUP_DIR, "--result-json", RESULT_JSON]);
-    }
-
     if (cleanup && result?.oldHomeIdDecimal) {
       log("");
       await cleanupHaDevices(result.oldHomeIdDecimal, result.oldHomeId);
     }
 
-    setStatus("done", "Factory reset complete. Your ZWA-2 is wiped and ready for a fresh network.");
+    if (rc === 3) {
+      // The wipe erased the NVM, but the adapter's USB re-enumerated on restart
+      // and the host briefly reclaims the port — so verifying / restoring the
+      // region in this same run can't win that race. Guide the user to the
+      // Check button, which runs later on a settled port. (Z-Wave JS also
+      // re-applies its own region when it restarts, so this is often moot.)
+      log("");
+      log("The wipe is done and confirmed. To double-check the new (empty) network");
+      log('and restore your RF region, click "Check adapter" above in ~30 seconds.');
+      setStatus("done", 'Factory reset complete. Click "Check adapter" shortly to verify and restore your region.');
+    } else {
+      setStatus("done", "Factory reset complete. Your ZWA-2 is wiped and ready for a fresh network.");
+    }
   } finally {
     await restartStopped();
   }
