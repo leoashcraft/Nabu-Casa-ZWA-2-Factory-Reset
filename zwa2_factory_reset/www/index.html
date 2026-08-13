@@ -20,12 +20,14 @@
   p.sub { color: var(--muted); margin: 0 0 20px; }
 
   /* Title/description stay full width above; controls left, status+log right. */
-  .columns { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+  /* align-items: stretch (grid default) makes the right column grow to the
+     row's height, which the taller left column sets — so the log fills down
+     to match the controls' total height. */
+  .columns { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
   .col-left { display: flex; flex-direction: column; gap: 16px; }
   .col-right { display: flex; flex-direction: column; gap: 14px; }
   @media (min-width: 880px) {
     .columns { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
-    .col-right { position: sticky; top: 20px; }   /* stays in view — no scrolling for status */
   }
 
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
@@ -52,7 +54,9 @@
   #logwrap { display:flex; flex:1; min-height:0; }
   #log { flex:1; background:#0d1117; color:#c9d1d9; border-radius:14px; padding:12px;
     font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
-    min-height:280px; max-height:calc(100vh - 220px); overflow:auto; }
+    min-height:280px; max-height:340px; overflow:auto; }
+  /* On wide screens let the log fill the column down to the left column's height. */
+  @media (min-width: 880px) { #log { max-height:none; } }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid currentColor;
     border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; vertical-align:-2px; margin-right:8px; }
   @keyframes spin { to { transform:rotate(360deg); } }
