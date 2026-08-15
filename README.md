@@ -1,4 +1,4 @@
-# zwa2-factory-reset
+# Nabu-Casa-ZWA-2-Factory-Reset
 
 Factory-reset a **Home Assistant Connect ZWA-2** Z-Wave adapter — even when the normal factory reset silently fails.
 
@@ -67,8 +67,8 @@ Run it on any computer with the ZWA-2 plugged in (macOS and Linux tested; Window
 Requires [Node.js](https://nodejs.org) 20 or newer.
 
 ```bash
-git clone https://github.com/leoashcraft/zwa2-factory-reset.git
-cd zwa2-factory-reset
+git clone https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset.git
+cd Nabu-Casa-ZWA-2-Factory-Reset
 npm install
 ```
 
@@ -113,7 +113,7 @@ This restores the complete network — Home ID, paired nodes, security keys — 
 If you run **Home Assistant OS or Supervised**, install this as an add-on with a one-click web interface — no configuration:
 
 1. Settings → Add-ons → Add-on Store → ⋮ (top right) → **Repositories** → add
-   `https://github.com/leoashcraft/zwa2-factory-reset`
+   `https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset`
 2. Install **ZWA-2 Factory Reset**, click **Start**, then **Open Web UI**.
 3. Click **Factory reset this adapter**, confirm, and watch the live log. That single button stops Z-Wave JS, backs up the network to `/share/zwa2-factory-reset/backups/`, erases via the bootloader, verifies the result, restores your RF region, optionally removes the old devices from Home Assistant, and restarts Z-Wave JS.
 
