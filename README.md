@@ -27,6 +27,7 @@ No Z-Wave PC Controller and no Windows-only tooling required either way.
 - [Option B — Home Assistant add-on](#option-b--home-assistant-add-on)
 - [RF region](#rf-region)
 - [After a successful wipe](#after-a-successful-wipe)
+- [Cleaning up Home Assistant after a wipe](#cleaning-up-home-assistant-after-a-wipe)
 - [Troubleshooting](#troubleshooting)
 - [Other adapters](#other-adapters)
 - [Safety notes](#safety-notes)
@@ -127,8 +128,27 @@ Erasing the NVM resets the radio region to the firmware default. Because not eve
 
 - The stick is factory-fresh and ready to start a new network. A new random Home ID is generated on first boot.
 - **Devices paired to the old network still believe they're in it.** Each must be excluded (any Z-Wave controller can perform exclusion) or factory-reset per its manual before it can be re-paired.
-- If you're re-adding the stick to Home Assistant and it still has the old Z-Wave integration config, removing and re-adding the integration is the cleanest path.
+- **Using Home Assistant?** Wiping the stick is only half the job — HA still caches the old network and needs a short cleanup. See [Cleaning up Home Assistant after a wipe](#cleaning-up-home-assistant-after-a-wipe).
 - Keep an eye out for a ZWA-2 firmware update that fixes the `SetDefault` bug — the [toolbox](https://home-assistant.github.io/zwa2-toolbox/) can flash firmware from the browser when one ships.
+
+## Cleaning up Home Assistant after a wipe
+
+A wipe only touches the stick. Home Assistant keeps its own copy of the old network, and that's the part that traps most people. It helps to know there are **three different things** that all look like "the controller":
+
+| In Home Assistant | What it is | Wiping the stick affects it? |
+|---|---|---|
+| The **physical controller** | The ZWA-2 stick itself (Z-Wave node 1). Gets a brand-new Home ID after a wipe. | ✅ Yes — this is what's erased. |
+| The **Z-Wave JS add-on** | The driver/server software. | ↻ Stopped and restarted around the wipe. |
+| The **Z-Wave integration ("hub")** | A config entry under *Settings → Devices & Services*, keyed to the old **Home ID**. It *owns* every node device in HA. | ❌ **No — this still points at the old, now-dead network.** |
+
+That last row is the catch. After a wipe the integration is still bound to the **old** Home ID and still owns all the old node devices — so you **can't delete those devices one-by-one** ("force remove" fails, ghost controllers pile up). The only clean fix is to remove the whole integration entry and let HA rediscover the stick:
+
+1. **Remove the old Z-Wave integration.** The add-on does this for you when you leave *"Also remove the old Z-Wave integration"* ticked (it targets only the entry matching the old Home ID, so other adapters are untouched). To do it by hand: *Settings → Devices & Services → Z-Wave → ⋮ → Delete*. Removing the entry deletes all of its cached devices in one go.
+2. **Restart Home Assistant** (*Settings → System → ⋮ → Restart Home Assistant*). This clears the leftover in-memory state.
+3. **Re-add the adapter.** When HA comes back, the ZWA-2 shows up under *Settings → Devices & Services* as a newly **discovered** device — click it and follow the prompts. This creates a clean integration on the *new* Home ID, and the cached clutter is gone.
+4. **Re-pair your devices** — each must be excluded or factory-reset (per its manual) before it can join the fresh network.
+
+> Deleting individual devices before removing the integration is exactly what gets you stuck. Remove the integration first, restart, then re-add.
 
 ## Troubleshooting
 

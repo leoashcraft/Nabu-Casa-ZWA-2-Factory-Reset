@@ -107,9 +107,10 @@
   <div class="card">
     <h2>2. Factory reset</h2>
     <p>Erase the Z-Wave network and start fresh. A backup is saved first, so you can undo it.</p>
-    <label class="check"><input type="checkbox" id="cleanup" />
-      <span>Also remove the old devices from Home Assistant (only the network on this adapter).</span></label>
+    <label class="check"><input type="checkbox" id="cleanup" checked />
+      <span>Also remove the old Z-Wave integration from Home Assistant (recommended — clears the stale cached devices, only for the network on this adapter).</span></label>
     <button id="btnWipe" class="btn-danger">Factory reset this adapter</button>
+    <p class="disabled-note" style="margin-top:12px;">Heads-up: wiping the stick is only half the job. Home Assistant still needs two quick manual steps afterwards — <strong>restart HA</strong>, then <strong>re-add the adapter</strong> when it's rediscovered. The live log will walk you through it.</p>
   </div>
 
   <div class="card">
@@ -133,6 +134,7 @@
     <h3>Factory reset this adapter?</h3>
     <p id="modalText">This permanently erases the Z-Wave network on your ZWA-2. Any paired devices will need to be re-added afterwards. A backup is saved automatically, so this can be undone.</p>
     <p id="modalRegion" style="font-weight:600;"></p>
+    <p id="modalCleanup" style="font-weight:600;"></p>
     <div class="row">
       <button class="btn-ghost" id="cancel">Cancel</button>
       <button class="btn-danger" id="confirm">Yes, factory reset</button>
@@ -185,6 +187,9 @@
     $("modalRegion").textContent = r === "keep"
       ? "The adapter's current region will be kept."
       : `The region will be set to: ${regionLabel()}.`;
+    $("modalCleanup").textContent = $("cleanup").checked
+      ? "The old Z-Wave integration will be removed from Home Assistant (you'll then restart HA and re-add the adapter — the log explains how)."
+      : "The old Z-Wave integration will be LEFT in place — its cached devices may linger until you remove it manually.";
     $("modal").classList.add("show");
   };
   $("cancel").onclick = () => $("modal").classList.remove("show");

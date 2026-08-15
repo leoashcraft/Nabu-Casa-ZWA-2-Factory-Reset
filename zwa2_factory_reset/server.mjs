@@ -160,8 +160,47 @@ async function cleanupHaDevices(oldHomeIdDecimal, oldHomeIdHex) {
     return;
   }
   const del = await sv("DELETE", `/core/api/config/config_entries/entry/${entries[0]}`);
-  if (del.ok) log("Removed the old network's devices from Home Assistant.");
-  else log("Could not remove the old entry automatically — remove it under Settings → Devices & Services → Z-Wave.");
+  if (del.ok) {
+    log("Removed the old Z-Wave integration (and its cached devices) from Home Assistant.");
+    return true;
+  }
+  log("Could not remove the old entry automatically — remove it under Settings → Devices & Services → Z-Wave.");
+  return false;
+}
+
+// Print the mandatory Home-Assistant follow-up steps into the live log. These
+// can't be automated safely (re-adding an integration runs HA's config flow;
+// a Core restart needs the user), so we spell them out. Wording depends on
+// whether we already deleted the old integration for the user.
+function logFinishInHaGuidance(integrationRemoved) {
+  log("");
+  log("──────────────────────────────────────────────");
+  log("Finish in Home Assistant");
+  log("──────────────────────────────────────────────");
+  if (integrationRemoved) {
+    log("The old Z-Wave integration was removed for you, so its stale/cached");
+    log("devices are gone. To bring the freshly-wiped adapter back cleanly:");
+    log("");
+    log("  1. Restart Home Assistant (Settings → System → ⋮ → Restart Home Assistant).");
+    log("  2. When it comes back, open Settings → Devices & Services. Your ZWA-2");
+    log("     appears as a newly DISCOVERED device — click it and follow the prompts");
+    log("     to set it up. This creates a clean network on the new Home ID.");
+    log("  3. Re-pair your Z-Wave devices (each must be excluded/factory-reset first).");
+  } else {
+    log("Your old Z-Wave devices are still cached in Home Assistant and can't be");
+    log("removed one-by-one while the old integration exists. To clear them:");
+    log("");
+    log("  1. Settings → Devices & Services → Z-Wave → ⋮ → Delete. This removes the");
+    log("     old integration AND all its stale/cached devices at once.");
+    log("  2. Restart Home Assistant (Settings → System → ⋮ → Restart Home Assistant).");
+    log("  3. When it comes back, HA re-discovers the ZWA-2 under Settings → Devices");
+    log("     & Services — click it to set up a clean network on the new Home ID.");
+    log("  4. Re-pair your Z-Wave devices (each must be excluded/factory-reset first).");
+    log("");
+    log("Tip: next time, tick \"Also remove the old Z-Wave integration\" to have");
+    log("step 1 done for you.");
+  }
+  log("──────────────────────────────────────────────");
 }
 
 // ------------------------------------------------------------------- cli runner
@@ -233,9 +272,10 @@ async function jobWipe(cleanup, region) {
       return;
     }
 
+    let integrationRemoved = false;
     if (cleanup && result?.oldHomeIdDecimal) {
       log("");
-      await cleanupHaDevices(result.oldHomeIdDecimal, result.oldHomeId);
+      integrationRemoved = await cleanupHaDevices(result.oldHomeIdDecimal, result.oldHomeId);
     }
 
     if (rc === 3) {
@@ -251,6 +291,10 @@ async function jobWipe(cleanup, region) {
     } else {
       setStatus("done", "Factory reset complete. Your ZWA-2 is wiped and ready for a fresh network.");
     }
+
+    // The stick is wiped, but Home Assistant still needs a couple of manual
+    // steps to shed the old cached network — spell them out in the log.
+    logFinishInHaGuidance(integrationRemoved);
   } finally {
     await restartStopped();
   }
