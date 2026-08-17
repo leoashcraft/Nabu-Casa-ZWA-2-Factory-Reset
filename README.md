@@ -7,13 +7,13 @@ There are **two ways to use it**, same engine underneath — pick whichever fits
 | | Best for | What you do |
 |---|---|---|
 | 🖥️ **Standalone command-line tool** | Any computer with the stick plugged in — no Home Assistant needed | `npm install`, then `node cli.mjs` |
-| 🏠 **Home Assistant add-on** | Home Assistant OS / Supervised users | Add the repo, install, **Open Web UI**, click a button |
+| 🏠 **Home Assistant app** | Home Assistant OS / Supervised users | Add the repo, install, **Open Web UI**, click a button |
 
 No Z-Wave PC Controller and no Windows-only tooling required either way.
 
 **Supported systems for the standalone tool:** macOS and Linux are tested. **Windows should work too** — Node.js, `serialport`, and `zwave-js` all support it (the adapter appears as a COM port like `COM5`) — but it hasn't been tested on Windows yet, so treat it as best-effort.
 
-![The ZWA-2 Factory Reset Home Assistant add-on web UI](img/zwa2-factory-reset-screenshot.avif)
+![The ZWA-2 Factory Reset Home Assistant app web UI](img/zwa2-factory-reset-screenshot.avif)
 
 ## Table of contents
 
@@ -24,7 +24,7 @@ No Z-Wave PC Controller and no Windows-only tooling required either way.
   - [Usage](#usage)
   - [Options](#options)
   - [Undo a wipe](#undo-a-wipe)
-- [Option B — Home Assistant add-on](#option-b--home-assistant-add-on)
+- [Option B — Home Assistant app](#option-b--home-assistant-app)
 - [RF region](#rf-region)
 - [After a successful wipe](#after-a-successful-wipe)
 - [Cleaning up Home Assistant after a wipe](#cleaning-up-home-assistant-after-a-wipe)
@@ -109,16 +109,18 @@ node cli.mjs --restore backups/zwa2-nvm-<homeid>-<timestamp>.bin
 
 This restores the complete network — Home ID, paired nodes, security keys — exactly as it was.
 
-## Option B — Home Assistant add-on
+## Option B — Home Assistant app
 
-If you run **Home Assistant OS or Supervised**, install this as an add-on with a one-click web interface — no configuration:
+If you run **Home Assistant OS or Supervised**, install this as an app with a one-click web interface — no configuration:
 
-1. Settings → Add-ons → Add-on Store → ⋮ (top right) → **Repositories** → add
+> **Note on wording:** Home Assistant 2026.2 renamed "Add-ons" to **"Apps"**. The steps below use the current terms; on older versions the same items are under *Settings → Add-ons → Add-on Store*.
+
+1. Go to **Settings → Apps → Install app**, open the **⋮** menu (top right), choose **Repositories**, and add
    `https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset`
 2. Install **ZWA-2 Factory Reset**, click **Start**, then **Open Web UI**.
-3. Click **Factory reset this adapter**, confirm, and watch the live log. That single button stops Z-Wave JS, backs up the network to `/share/zwa2-factory-reset/backups/`, erases via the bootloader, verifies the result, restores your RF region, optionally removes the old devices from Home Assistant, and restarts Z-Wave JS.
+3. Click **Factory reset this adapter**, confirm, and watch the live log. That single button stops Z-Wave JS, backs up the network to `/share/zwa2-factory-reset/backups/`, erases via the bootloader, verifies the result, restores your RF region, optionally removes the old integration from Home Assistant, and restarts Z-Wave JS.
 
-There's also a **Check adapter** button (safe, read-only) and **Restore a backup** button. See the [add-on documentation](zwa2_factory_reset/DOCS.md). Tested on Home Assistant OS with a real ZWA-2. HA Container/Core installs can't use add-ons — use the CLI on the host instead.
+There's also a **Check adapter** button (safe, read-only) and **Restore a backup** button. See the [app documentation](zwa2_factory_reset/DOCS.md). Tested on Home Assistant OS with a real ZWA-2. HA Container/Core installs can't use apps — use the CLI on the host instead.
 
 ## RF region
 
@@ -138,12 +140,12 @@ A wipe only touches the stick. Home Assistant keeps its own copy of the old netw
 | In Home Assistant | What it is | Wiping the stick affects it? |
 |---|---|---|
 | The **physical controller** | The ZWA-2 stick itself (Z-Wave node 1). Gets a brand-new Home ID after a wipe. | ✅ Yes — this is what's erased. |
-| The **Z-Wave JS add-on** | The driver/server software. | ↻ Stopped and restarted around the wipe. |
+| The **Z-Wave JS app** | The driver/server software. | ↻ Stopped and restarted around the wipe. |
 | The **Z-Wave integration ("hub")** | A config entry under *Settings → Devices & Services*, keyed to the old **Home ID**. It *owns* every node device in HA. | ❌ **No — this still points at the old, now-dead network.** |
 
 That last row is the catch. After a wipe the integration is still bound to the **old** Home ID and still owns all the old node devices — so you **can't delete those devices one-by-one** ("force remove" fails, ghost controllers pile up). The only clean fix is to remove the whole integration entry and let HA rediscover the stick:
 
-1. **Remove the old Z-Wave integration.** The add-on does this for you when you leave *"Also remove the old Z-Wave integration"* ticked (it targets only the entry matching the old Home ID, so other adapters are untouched). To do it by hand: *Settings → Devices & Services → Z-Wave → ⋮ → Delete*. Removing the entry deletes all of its cached devices in one go.
+1. **Remove the old Z-Wave integration.** The app does this for you when you leave *"Also remove the old Z-Wave integration"* ticked (it targets only the entry matching the old Home ID, so other adapters are untouched). To do it by hand: *Settings → Devices & Services → Z-Wave → ⋮ → Delete*. Removing the entry deletes all of its cached devices in one go.
 2. **Restart Home Assistant** (*Settings → System → ⋮ → Restart Home Assistant*). This clears the leftover in-memory state.
 3. **Re-add the adapter.** When HA comes back, the ZWA-2 shows up under *Settings → Devices & Services* as a newly **discovered** device — click it and follow the prompts. This creates a clean integration on the *new* Home ID, and the cached clutter is gone.
 4. **Re-pair your devices** — each must be excluded or factory-reset (per its manual) before it can join the fresh network.

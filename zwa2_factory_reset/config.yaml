@@ -1,8 +1,8 @@
 name: ZWA-2 Factory Reset
-version: "1.4.0"
+version: "1.4.1"
 slug: zwa2_factory_reset
 description: One-click factory reset for the Home Assistant Connect ZWA-2 (works around the SetDefault firmware bug)
-url: https://github.com/leoashcraft/zwa2-factory-reset
+url: https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset
 arch:
   - aarch64
   - amd64

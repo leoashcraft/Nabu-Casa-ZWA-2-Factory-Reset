@@ -4,7 +4,7 @@ Wipes a Home Assistant Connect ZWA-2 back to factory settings — even when Home
 
 ## How to use it
 
-1. Install the add-on and click **START**.
+1. Install the app and click **START**.
 2. Click **OPEN WEB UI** (also appears as "ZWA-2 Reset" in the sidebar).
 3. On the page you get three buttons:
    - **Check adapter** — shows what's on the stick right now. Changes nothing.
@@ -15,9 +15,9 @@ That's it. You never touch YAML or toggles.
 
 ## What "Factory reset" does for you
 
-Behind that one button, the add-on:
+Behind that one button, the app:
 
-1. Stops the Z-Wave JS add-on so the adapter is free (and restarts it when finished).
+1. Stops the Z-Wave JS app so the adapter is free (and restarts it when finished).
 2. **Backs up** the adapter's full network to `/share/zwa2-factory-reset/backups/` — so the wipe can be undone.
 3. Erases the Z-Wave network via the adapter's bootloader (the reliable method that works around the firmware bug).
 4. Verifies the adapter came back with a fresh, empty network and restores your **RF region**.
@@ -39,5 +39,5 @@ Changed your mind entirely? Use **Restore a backup** and pick the backup from ju
 - A backup is always made before a wipe, and the wipe refuses to proceed if the backup fails.
 - Backups contain your network's security keys — treat the files in `/share/zwa2-factory-reset/backups/` as sensitive and delete them when no longer needed.
 - The **Restore** list warns you if a backup contains an empty network (i.e. one taken right after a wipe).
-- The add-on needs the `manager` role (to stop/start Z-Wave JS) and Home Assistant API access (for the optional device cleanup).
-- Only Home Assistant OS / Supervised support add-ons. On HA Container/Core, use the command-line tool from the [repository](https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset) instead.
+- The app needs the `manager` role (to stop/start Z-Wave JS) and Home Assistant API access (for the optional device cleanup).
+- Only Home Assistant OS / Supervised support apps. On HA Container/Core, use the command-line tool from the [repository](https://github.com/leoashcraft/Nabu-Casa-ZWA-2-Factory-Reset) instead.
