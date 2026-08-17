@@ -3,3 +3,5 @@ backups/
 *.log
 cache/
 .DS_Store
+# Test residue: a fixture written to `${baseDir}/by-id` when baseDir was undefined.
+undefined/
